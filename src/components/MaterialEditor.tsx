@@ -1,49 +1,44 @@
-import { useState, useEffect } from 'react';
+// src/components/MaterialEditor.tsx
 
-export default function MaterialEditor() {
-  const [materialJson, setMaterialJson] = useState('');
+import { useState, useEffect } from 'react';
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { MaterialData } from '@/types/material';
+
+interface MaterialEditorProps {
+  data: MaterialData;
+  onSave: (data: MaterialData) => void;
+}
+
+export default function MaterialEditor({ data, onSave }: MaterialEditorProps) {
+  const [editedData, setEditedData] = useState<MaterialData>(data);
 
   useEffect(() => {
-    fetch('/api/get-material-json')
-      .then(response => response.json())
-      .then(data => setMaterialJson(JSON.stringify(data, null, 2)));
-  }, []);
+    setEditedData(data);
+  }, [data]);
 
-  const handleSave = async () => {
-    try {
-      const response = await fetch('/api/update-material-json', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: materialJson,
-      });
+  const handleChange = (key: string, value: any) => {
+    setEditedData(prev => ({ ...prev, [key]: value }));
+  };
 
-      if (response.ok) {
-        alert('Materials.json updated successfully');
-      } else {
-        alert('Error updating Materials.json');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      alert('Error updating Materials.json');
-    }
+  const handleSave = () => {
+    onSave(editedData);
   };
 
   return (
-    <div className="mt-8">
-      <h2 className="text-xl font-bold mb-4 text-black">Edit Materials.json</h2>
-      <textarea
-        className="w-full h-64 p-2 border rounded text-black bg-white"
-        value={materialJson}
-        onChange={(e) => setMaterialJson(e.target.value)}
-      />
-      <button
-        className="mt-2 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-        onClick={handleSave}
-      >
-        Save Changes
-      </button>
+    <div className="space-y-4">
+      {Object.entries(editedData).map(([key, value]) => (
+        <div key={key}>
+          <Label htmlFor={key}>{key}</Label>
+          <Input
+            id={key}
+            value={JSON.stringify(value)}
+            onChange={(e) => handleChange(key, JSON.parse(e.target.value))}
+          />
+        </div>
+      ))}
+      <Button onClick={handleSave}>Save Changes</Button>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+//src/app/api/update-materials/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { updateMaterials } from '@/lib/MaterialUpdater';
 

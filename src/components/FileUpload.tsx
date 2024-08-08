@@ -1,45 +1,36 @@
-import React, { useCallback } from 'react';
+// src/components/FileUpload.tsx
+
+import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { Button } from "@/components/ui/button";
 
 interface FileUploadProps {
-  label: string;
-  onFileSelect: (files: File | File[] | null) => void;
-  multiple?: boolean;
-  activeFileName: string;
+  onFileSelect: (file: File) => void;
+  accept: string;
+  label?: string;
+  selectedFileName?: string;
 }
 
-export default function FileUpload({ label, onFileSelect, multiple = false, activeFileName }: FileUploadProps) {
+export default function FileUpload({ onFileSelect, accept, label, selectedFileName }: FileUploadProps) {
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    onFileSelect(multiple ? acceptedFiles : acceptedFiles[0]);
-  }, [multiple, onFileSelect]);
+    if (acceptedFiles.length > 0) {
+      onFileSelect(acceptedFiles[0]);
+    }
+  }, [onFileSelect]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, multiple });
-
-  const handleClear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onFileSelect(multiple ? [] : null);
-  };
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: { [accept]: [] } });
 
   return (
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
-      <div
-        {...getRootProps()}
-        className={`p-4 border-2 border-dashed rounded-md ${
-          isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
-        }`}
-      >
-        <input {...getInputProps()} />
-        <p className="text-center text-black">
-          {activeFileName || "Drag 'n' drop files here, or click to select files"}
-        </p>
-      </div>
-      <button
-        onClick={handleClear}
-        className="mt-2 px-3 py-1 bg-gray-400 text-white rounded hover:bg-red-600"
-      >
-        Clear
-      </button>
+    <div {...getRootProps()} className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+      <input {...getInputProps()} />
+      {selectedFileName ? (
+        <p>{selectedFileName}</p>
+      ) : isDragActive ? (
+        <p>Drop the file here ...</p>
+      ) : (
+        <p>{label || `Drag 'n' drop a file here, or click to select a file`}</p>
+      )}
+      <Button className="mt-4">Select File</Button>
     </div>
   );
 }
