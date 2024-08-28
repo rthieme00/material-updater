@@ -1,6 +1,6 @@
 // src/components/GltfUpdater.tsx
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,10 +23,23 @@ interface GltfUpdaterProps {
   setReferenceMeshes: (meshes: string[]) => void;
   openReferenceMaterialsModal: () => void;
   openReferenceMeshesModal: () => void;
-  updateMaterialData: (updatedData: any) => void; // Add this line
+  updateMaterialData: (updatedData: any) => void;
 }
 
-function WarningDialog({ isOpen, onClose, differences, onAddMissingMaterials }) {
+interface WarningDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  differences: string[];
+  onAddMissingMaterials: () => void;
+}
+
+interface ErrorDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  message: string;
+}
+
+function WarningDialog({ isOpen, onClose, differences, onAddMissingMaterials }: WarningDialogProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent>
@@ -52,7 +65,7 @@ function WarningDialog({ isOpen, onClose, differences, onAddMissingMaterials }) 
   );
 }
 
-function ErrorDialog({ isOpen, onClose, message }) {
+function ErrorDialog({ isOpen, onClose, message }: ErrorDialogProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent>
@@ -77,7 +90,7 @@ export default function GltfUpdater({
   setReferenceMeshes,
   openReferenceMaterialsModal,
   openReferenceMeshesModal,
-  updateMaterialData // Add this line
+  updateMaterialData
 }: GltfUpdaterProps) {
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [referenceData, setReferenceData] = useState<any | null>(null);
@@ -123,13 +136,13 @@ export default function GltfUpdater({
         }
       } catch (error) {
         console.error("Error processing reference file:", error);
-        setErrorMessage(`Error processing reference file: ${error}`);
+        setErrorMessage(`Error processing reference file: ${error instanceof Error ? error.message : 'Unknown error'}`);
         setIsErrorDialogOpen(true);
       }
     }
   };
 
-  const handleAddMissingMaterials = () => {
+  const handleAddMissingMaterials = useCallback(() => {
     if (!referenceData || !materialData) {
       setErrorMessage('Reference data or material data is missing');
       setIsErrorDialogOpen(true);
@@ -148,13 +161,11 @@ export default function GltfUpdater({
   
     updatedMaterialData.materials = jsonMaterials;
   
-    // Update the materialData in the parent component
-    // Use the new prop to update the material data
     updateMaterialData(updatedMaterialData);
   
     setFeedback('Missing materials added to JSON');
     setIsWarningDialogOpen(false);
-  };
+  }, [referenceData, materialData, updateMaterialData, setFeedback]);
 
   const handleTargetFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
@@ -200,33 +211,32 @@ export default function GltfUpdater({
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `updated_${targetFiles[0].name}`;
+        a.download = `${targetFiles[0].name}`;
         a.click();
         URL.revokeObjectURL(url);
-        setFeedback(`Updated file downloaded: updated_${targetFiles[0].name}`);
+        setFeedback(`Updated file downloaded: ${targetFiles[0].name}`);
       } else if (updatedFiles.length > 1) {
         // Create zip file and download
         const JSZip = (await import('jszip')).default;
         const zip = new JSZip();
         updatedFiles.forEach((fileContent, index) => {
-          zip.file(`updated_${targetFiles[index].name}`, fileContent);
+          zip.file(`${targetFiles[index].name}`, fileContent);
         });
         const content = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(content);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'updated_gltf_files.zip';
+        a.download = 'gltf_files.zip';
         a.click();
         URL.revokeObjectURL(url);
         setFeedback('Updated files downloaded as zip');
       }
     } catch (error) {
       console.error('Error updating materials:', error);
-      setErrorMessage(`Error updating materials: ${error}`);
+      setErrorMessage(`Error updating materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsErrorDialogOpen(true);
     }
   };
-
 
   return (
     <div className="space-y-6">

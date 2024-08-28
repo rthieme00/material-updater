@@ -26,13 +26,11 @@ interface MeshAssignment {
 interface MaterialMeshEditorProps {
   data: any;
   onSave: (data: any) => void;
-  onUpdate: (data: any) => void; // Add this line
 }
 
 const ITEMS_PER_PAGE = 5;
 
-const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave, onUpdate }) => {
-  const [editedData, setEditedData] = useState(data);
+const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave }) => {
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [meshAssignments, setMeshAssignments] = useState<{[key: string]: MeshAssignment}>({});
@@ -46,10 +44,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave, o
   const [currentItemToTag, setCurrentItemToTag] = useState<string | null>(null);
 
   useEffect(() => {
-    setEditedData(data);
-  }, [data]);
-
-  useEffect(() => {
     console.log('Data received:', data);
     try {
       setMaterials(data.materials || []);
@@ -59,12 +53,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave, o
       console.error('Error setting initial state:', error);
     }
   }, [data]);
-
-  const handleChange = (key: string, value: any) => {
-    const updatedData = { ...editedData, [key]: value };
-    setEditedData(updatedData);
-    onUpdate(updatedData); // Immediately update parent component
-  };
 
   const updateAllTags = useCallback((materials: Material[]) => {
     const tags = new Set<string>();
@@ -277,7 +265,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave, o
       materials,
       meshAssignments
     };
-    onSave(editedData);
+    onSave(updatedData);
   };
 
   return (
