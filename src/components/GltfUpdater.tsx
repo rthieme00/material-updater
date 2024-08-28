@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { updateMaterials, compareMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
+import { updateMaterials, compareMaterials } from '@/lib/MaterialUpdater';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
@@ -102,7 +102,6 @@ export default function GltfUpdater({
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [differences, setDifferences] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  const [exportIndividualVariantsFlag, setExportIndividualVariantsFlag] = useState(false);
 
   const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -191,71 +190,46 @@ export default function GltfUpdater({
 
     try {
       setFeedback('Updating files...');
-      if (exportIndividualVariantsFlag) {
-        const exportedFiles = await exportIndividualVariants(
-          referenceFile,
-          targetFiles,
-          selectedModel,
-          applyMoodRotation,
-          materialData
-        );
-        
-        // Create a zip file with all exported variants
+      const updatedFiles = await updateMaterials(
+        referenceFile,
+        targetFiles,
+        selectedModel,
+        applyVariants,
+        applyMoodRotation,
+        materialData
+      );
+
+      if (updatedFiles.length === 0) {
+        setErrorMessage('No files were updated. Please check your input and try again.');
+        setIsErrorDialogOpen(true);
+        return;
+      }
+
+      if (updatedFiles.length === 1) {
+        // Download single file
+        const blob = new Blob([updatedFiles[0]], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${targetFiles[0].name}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setFeedback(`Updated file downloaded: ${targetFiles[0].name}`);
+      } else if (updatedFiles.length > 1) {
+        // Create zip file and download
         const JSZip = (await import('jszip')).default;
         const zip = new JSZip();
-        exportedFiles.forEach(({ fileName, content }) => {
-          zip.file(fileName, content);
+        updatedFiles.forEach((fileContent, index) => {
+          zip.file(`${targetFiles[index].name}`, fileContent);
         });
         const content = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(content);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'gltf_variants.zip';
+        a.download = 'gltf_files.zip';
         a.click();
         URL.revokeObjectURL(url);
-        setFeedback('Exported individual variants as zip');
-      } else {
-        const updatedFiles = await updateMaterials(
-          referenceFile,
-          targetFiles,
-          selectedModel,
-          applyVariants,
-          applyMoodRotation,
-          materialData
-        );
-
-        if (updatedFiles.length === 0) {
-          setErrorMessage('No files were updated. Please check your input and try again.');
-          setIsErrorDialogOpen(true);
-          return;
-        }
-
-        if (updatedFiles.length === 1) {
-          // Download single file
-          const blob = new Blob([updatedFiles[0]], { type: 'application/octet-stream' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${targetFiles[0].name}`;
-          a.click();
-          URL.revokeObjectURL(url);
-          setFeedback(`Updated file downloaded: ${targetFiles[0].name}`);
-        } else if (updatedFiles.length > 1) {
-          // Create zip file and download
-          const JSZip = (await import('jszip')).default;
-          const zip = new JSZip();
-          updatedFiles.forEach((fileContent, index) => {
-            zip.file(`${targetFiles[index].name}`, fileContent);
-          });
-          const content = await zip.generateAsync({ type: 'blob' });
-          const url = URL.createObjectURL(content);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'gltf_files.zip';
-          a.click();
-          URL.revokeObjectURL(url);
-          setFeedback('Updated files downloaded as zip');
-        }
+        setFeedback('Updated files downloaded as zip');
       }
     } catch (error) {
       console.error('Error updating materials:', error);
@@ -313,14 +287,6 @@ export default function GltfUpdater({
             onCheckedChange={(checked) => setApplyMoodRotation(checked as boolean)}
           />
           <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Checkbox 
-            id="exportIndividualVariants" 
-            checked={exportIndividualVariantsFlag} 
-            onCheckedChange={(checked) => setExportIndividualVariantsFlag(checked as boolean)}
-          />
-          <Label htmlFor="exportIndividualVariants">Export individual GLTF of all Variants</Label>
         </div>
       </div>
       {materialData && materialData.models && (
