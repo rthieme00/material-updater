@@ -6,15 +6,15 @@ import MeshItem from './MeshItem';
 import { Plus } from 'lucide-react';
 
 interface MeshAssignmentsSectionProps {
-  meshItems: [string, any][];
-  materials: any[];
+  meshItems: [string, { defaultMaterial: string; variants: Array<{ name: string; material: string }> }][];
+  materials: Array<{ name: string }>;
   expandedMeshes: Set<string>;
   onToggleMeshExpansion: (meshName: string) => void;
   onRenameMesh: (meshName: string) => void;
   onRemoveMesh: (meshName: string) => void;
   onAutoAssignTag: (meshName: string) => void;
-  onAssignmentChange: (meshName: string, field: string, value: string) => void;
-  onVariantChange: (meshName: string, index: number, field: string, value: string) => void;
+  onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
+  onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
   onAddVariant: (meshName: string) => void;
   onAddMesh: () => void;

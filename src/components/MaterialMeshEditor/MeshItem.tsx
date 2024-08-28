@@ -10,15 +10,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 interface MeshItemProps {
   meshName: string;
-  assignment: any;
-  materials: any[];
+  assignment: {
+    defaultMaterial: string;
+    variants: Array<{ name: string; material: string }>;
+  };
+  materials: Array<{ name: string }>;
   expanded: boolean;
   onToggle: (meshName: string) => void;
   onRename: (meshName: string) => void;
   onRemove: (meshName: string) => void;
   onAutoAssign: (meshName: string) => void;
-  onAssignmentChange: (meshName: string, field: string, value: string) => void;
-  onVariantChange: (meshName: string, index: number, field: string, value: string) => void;
+  onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
+  onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
   onAddVariant: (meshName: string) => void;
 }
@@ -72,7 +75,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
               <label className="block text-sm font-medium mb-1">Default Material:</label>
               <Select
                 value={assignment.defaultMaterial || undefined}
-                onValueChange={(value) => onAssignmentChange(meshName, 'defaultMaterial', value)}
+                onValueChange={(value) => onAssignmentChange(meshName, "defaultMaterial", value)}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a material" />
@@ -95,19 +98,19 @@ const MeshItem: React.FC<MeshItemProps> = ({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {assignment.variants.map((variant: any, index: number) => (
+                  {assignment.variants.map((variant, index) => (
                     <TableRow key={index}>
                       <TableCell>
                         <Input
                           value={variant.name}
-                          onChange={(e) => onVariantChange(meshName, index, 'name', e.target.value)}
+                          onChange={(e) => onVariantChange(meshName, index, "name", e.target.value)}
                           placeholder="Variant name"
                         />
                       </TableCell>
                       <TableCell>
                         <Select
                           value={variant.material || undefined}
-                          onValueChange={(value) => onVariantChange(meshName, index, 'material', value)}
+                          onValueChange={(value) => onVariantChange(meshName, index, "material", value)}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select a material" />

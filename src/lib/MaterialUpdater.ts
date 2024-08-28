@@ -101,7 +101,7 @@ export function compareMaterials(referenceData: any, materialData: any): string[
     return differences;
   }
 
-  const referenceMaterials = new Set(referenceData.materials.map((m: any) => m.name));
+  const referenceMaterials = Array.from(new Set(referenceData.materials.map((m: any) => m.name)));
   const jsonMaterials = new Set(materialData.materials.map((m: any) => m.name));
 
   for (const material of referenceMaterials) {
@@ -110,8 +110,8 @@ export function compareMaterials(referenceData: any, materialData: any): string[
     }
   }
 
-  for (const material of jsonMaterials) {
-    if (!referenceMaterials.has(material)) {
+  for (const material of Array.from(jsonMaterials)) {
+    if (!referenceMaterials.includes(material)) {
       differences.push(`Material "${material}" is in the JSON but not in the reference GLTF file.`);
     }
   }
@@ -178,7 +178,7 @@ export async function updateMaterials(
       // Filter by model if specified
       if (model && model !== 'Regular' && materialData.models) {
         const modelFiles = materialData.models[model];
-        if (!modelFiles || !modelFiles.some(name => targetFile.name.includes(name))) {
+        if (!modelFiles || !modelFiles.some((name: string) => targetFile.name.includes(name))) {
           console.log(`Skipping file ${targetFile.name} as it doesn't match the selected model.`);
           continue;
         }

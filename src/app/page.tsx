@@ -130,7 +130,7 @@ export default function Home() {
                 <CardTitle>Edit Materials</CardTitle>
               </CardHeader>
               <CardContent>
-                <MaterialMeshEditor data={materialData} onSave={handleSave} onUpdate={handleUpdate} />
+                <MaterialMeshEditor data={materialData} onSave={handleSave} />
                 <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
                   Clear Materials
                 </Button>

@@ -182,7 +182,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave })
     setCurrentItemToRename(null);
   }, [currentItemToRename]);
 
-  const handleAssignmentChange = (meshName: string, field: 'defaultMaterial' | 'variants', value: string | undefined) => {
+  const handleAssignmentChange = (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => {
     setMeshAssignments(prev => ({
       ...prev,
       [meshName]: {
@@ -210,7 +210,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ data, onSave })
     });
   };
 
-  const handleVariantChange = (meshName: string, index: number, field: 'name' | 'material', value: string | undefined) => {
+  const handleVariantChange = (meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
     setMeshAssignments(prev => ({
       ...prev,
       [meshName]: {
