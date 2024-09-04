@@ -148,16 +148,33 @@ export async function updateMaterials(
       targetData.extensionsRequired = referenceData.extensionsRequired;
       targetData.extensionsUsed = referenceData.extensionsUsed;
 
-      // Update materials and textures
+      // Check for original AO texture and image
+      const hasOriginalAOTexture = targetData.textures && targetData.textures.length > 0;
+      const hasOriginalAOImage = targetData.images && targetData.images.length > 0;
+
+      // Preserve the original AO texture and image if they exist
+      const originalAOTexture = hasOriginalAOTexture ? targetData.textures[0] : null;
+      const originalAOImage = hasOriginalAOImage ? targetData.images[0] : null;
+
+      // Update materials, textures, and images
       targetData.materials = referenceData.materials;
       targetData.textures = referenceData.textures;
+      targetData.images = referenceData.images;
 
-      if (referenceData.images) {
-        const aoImage = targetData.images[0];
-        targetData.images = [aoImage, ...referenceData.images.slice(1)];
+      // Replace AO texture and image if they existed in the original file
+      if (hasOriginalAOTexture && originalAOTexture) {
+        targetData.textures[0] = originalAOTexture;
+      }
+      if (hasOriginalAOImage && originalAOImage) {
+        targetData.images[0] = originalAOImage;
       }
 
       targetData.samplers = targetData.samplers || [];
+
+      // Ensure AO texture source is set correctly if it exists
+      if (hasOriginalAOTexture && targetData.textures[0] && targetData.textures[0].source !== 0) {
+        targetData.textures[0].source = 0;
+      }
 
       // Apply mood rotation if flag is set
       if (applyMoodRotationFlag) {
@@ -237,42 +254,17 @@ export async function exportIndividualVariants(
   }
 
   try {
-    const referenceContent = await referenceFile.text();
-    const referenceData = JSON.parse(referenceContent);
-
     for (const targetFile of targetFiles) {
       console.log(`Processing target file: ${targetFile.name}`);
       const targetContent = await targetFile.text();
-      let targetData = JSON.parse(targetContent);
-
-      // Preserve the original AO image and texture
-      const originalAOImage = targetData.images[0];
-      const originalAOTexture = targetData.textures[0];
-
-      // Update extensions, materials, and textures
-      targetData.extensions = referenceData.extensions;
-      targetData.extensionsRequired = referenceData.extensionsRequired;
-      targetData.extensionsUsed = referenceData.extensionsUsed;
-      targetData.materials = referenceData.materials;
-      
-      // Combine textures and images, keeping the original AO texture and image
-      targetData.textures = [originalAOTexture, ...referenceData.textures.slice(1)];
-      targetData.images = [originalAOImage, ...referenceData.images.slice(1)];
-      
-      targetData.samplers = targetData.samplers || [];
-
-      // Apply mood rotation if flag is set
-      if (applyMoodRotationFlag) {
-        const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
-                           materialData.models['Blavalen'].includes(targetFile.name);
-        applyMoodRotation(targetData, isBlavalen);
-      }
+      const targetData = JSON.parse(targetContent);
 
       // Get all variants
       const variants = targetData.extensions?.KHR_materials_variants?.variants || [];
 
       // For each variant, create a separate GLTF file
       for (const variant of variants) {
+        console.log(`Processing variant: ${variant.name}`);
         let variantData = JSON.parse(JSON.stringify(targetData)); // Deep clone
 
         // Set the variant as the default material for all meshes
@@ -294,10 +286,6 @@ export async function exportIndividualVariants(
         const usedTextures = new Set<number>();
         const usedImages = new Set<number>();
 
-        // Always include the AO texture and image
-        usedTextures.add(0);
-        usedImages.add(0);
-
         variantData.meshes.forEach((mesh: any) => {
           mesh.primitives.forEach((primitive: any) => {
             if (primitive.material !== undefined) {
@@ -308,8 +296,8 @@ export async function exportIndividualVariants(
 
         // Create new arrays for materials, textures, and images
         const newMaterials: any[] = [];
-        const newTextures: any[] = [originalAOTexture]; // Start with the AO texture
-        const newImages: any[] = [originalAOImage]; // Start with the AO image
+        const newTextures: any[] = [];
+        const newImages: any[] = [];
 
         // Process materials and update texture references
         usedMaterials.forEach((oldMaterialIndex) => {
@@ -363,6 +351,12 @@ export async function exportIndividualVariants(
           processTexture(material.occlusionTexture);
           processTexture(material.emissiveTexture);
 
+          // Process sheen texture
+          if (material.extensions && material.extensions.KHR_materials_sheen) {
+            processTexture(material.extensions.KHR_materials_sheen.sheenColorTexture);
+            processTexture(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
+          }
+
           newMaterials.push(material);
         });
 
@@ -381,14 +375,22 @@ export async function exportIndividualVariants(
           });
         });
 
+        // Apply mood rotation if flag is set
+        if (applyMoodRotationFlag) {
+          const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
+                             materialData.models['Blavalen'].includes(targetFile.name);
+          applyMoodRotation(variantData, isBlavalen);
+        }
+
         // Create file name
-        const fileName = `${targetFile.name.replace('.gltf', '')}_${variant.name}.gltf`;
+        const fileName = `${targetFile.name.replace('.gltf', '')}${variant.name}.gltf`;
 
         // Convert to ArrayBuffer
         const variantBlob = new Blob([JSON.stringify(variantData, null, 2)], { type: 'application/json' });
         const arrayBuffer = await variantBlob.arrayBuffer();
 
         exportedFiles.push({ fileName, content: arrayBuffer });
+        console.log(`Exported variant file: ${fileName}`);
       }
     }
   } catch (error) {
