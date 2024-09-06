@@ -61,11 +61,6 @@ function applyVariants(targetData: any, materialData: any) {
     if (!meshAssignment) return;
 
     mesh.primitives.forEach((primitive: any) => {
-      if (!primitive.extensions) primitive.extensions = {};
-      if (!primitive.extensions.KHR_materials_variants) {
-        primitive.extensions.KHR_materials_variants = { mappings: [] };
-      }
-
       const mappings = primitive.extensions.KHR_materials_variants.mappings;
 
       // Set default material
