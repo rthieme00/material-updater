@@ -1,4 +1,4 @@
-// src/components/ErrorDialog.tsx
+// src/components/Dialogs/ErrorDialog.tsx
 
 import React from 'react';
 import {

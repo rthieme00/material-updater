@@ -1,4 +1,4 @@
-// src/components/InputDialog.tsx
+// src/components/Dialogs/InputDialog.tsx
 
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";

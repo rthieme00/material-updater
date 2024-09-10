@@ -1,4 +1,4 @@
-// src/components/ConfirmationDialog.tsx
+// src/components/Dialogs/ConfirmationDialog.tsx
 
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";

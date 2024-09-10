@@ -382,7 +382,7 @@ export async function exportIndividualVariants(
           applyMoodRotation(variantData, isBlavalen);
         }
 
-        // Create file name
+       // Create file name
         const fileName = `${targetFile.name.replace('.gltf', '')}${variant.name}.gltf`;
 
         // Convert to ArrayBuffer
@@ -400,4 +400,4 @@ export async function exportIndividualVariants(
 
   console.log(`Total exported variant files: ${exportedFiles.length}`);
   return exportedFiles;
-}
+} 

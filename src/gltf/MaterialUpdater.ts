@@ -1,7 +1,7 @@
 // src/gltf/MaterialUpdater.ts
 
 import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage } from '@/gltf/gltfTypes';
-import { findIndex } from 'lodash';
+import { cloneDeep } from 'lodash';
 
 function findAOImageIndex(images: GltfImage[]): number {
   return images.findIndex(image => image.name && image.name.endsWith('_AO'));
@@ -223,7 +223,7 @@ export async function exportIndividualVariants(
   try {
     for (let variantIndex = 0; variantIndex < totalVariants; variantIndex++) {
       const variant = variants[variantIndex];
-      let variantData: GltfData = JSON.parse(JSON.stringify(jsonData));
+      let variantData: GltfData = cloneDeep(jsonData);
 
       // Apply the variant as the default material
       variantData.meshes.forEach((mesh) => {
@@ -247,7 +247,7 @@ export async function exportIndividualVariants(
       const newTextures = Array.from(usedTextures).map((index) => variantData.textures[index]);
       const newImages = Array.from(usedImages).map((index) => variantData.images[index]);
 
-      // Update indices
+      // Create mapping for updating indices
       const materialMap = new Map(Array.from(usedMaterials).map((oldIndex, newIndex) => [oldIndex, newIndex]));
       const textureMap = new Map(Array.from(usedTextures).map((oldIndex, newIndex) => [oldIndex, newIndex]));
       const imageMap = new Map(Array.from(usedImages).map((oldIndex, newIndex) => [oldIndex, newIndex]));
@@ -256,7 +256,7 @@ export async function exportIndividualVariants(
       variantData.meshes.forEach((mesh) => {
         mesh.primitives.forEach((primitive) => {
           if (primitive.material !== undefined) {
-            primitive.material = materialMap.get(primitive.material) || primitive.material;
+            primitive.material = materialMap.get(primitive.material) ?? primitive.material;
           }
         });
       });
@@ -265,7 +265,7 @@ export async function exportIndividualVariants(
       newMaterials.forEach((material) => {
         const updateTextureIndex = (textureInfo: any) => {
           if (textureInfo && textureInfo.index !== undefined) {
-            textureInfo.index = textureMap.get(textureInfo.index) || textureInfo.index;
+            textureInfo.index = textureMap.get(textureInfo.index) ?? textureInfo.index;
           }
         };
 
@@ -285,7 +285,7 @@ export async function exportIndividualVariants(
       // Update image references in textures
       newTextures.forEach((texture) => {
         if (texture.source !== undefined) {
-          texture.source = imageMap.get(texture.source) || texture.source;
+          texture.source = imageMap.get(texture.source) ?? texture.source;
         }
       });
 
