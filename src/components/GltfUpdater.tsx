@@ -171,7 +171,7 @@ export default function GltfUpdater({
   };
 
   const processFiles = useCallback(async () => {
-    if (!referenceFile || targetFiles.length === 0 || !materialData || !outputDirectory) {
+    if (!referenceFile || targetFiles.length === 0 || !materialData) {
       setErrorMessage('Please select reference file, target files, ensure material data is loaded, and select an output directory.');
       setIsErrorDialogOpen(true);
       return;
@@ -241,7 +241,9 @@ export default function GltfUpdater({
             applyMoodRotation,
             materialData,
             processingMode,
-            fileName: file.name
+            fileName: file.name,
+            refFileName: referenceFileName,
+            targetFileName: file.name
           }, []);
         });
       };
@@ -438,13 +440,28 @@ export default function GltfUpdater({
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select number of concurrent processes" />
               </SelectTrigger>
-              <SelectContent>
+              {processingMode === 'update' ? (
+                <SelectContent>
+                  <SelectItem value="1">1</SelectItem>
+                  <SelectItem value="2">2</SelectItem>
+                  <SelectItem value="4">4</SelectItem>
+                  <SelectItem value="8">8</SelectItem>
+                  <SelectItem value="16">16</SelectItem>
+                  <SelectItem value="32">32</SelectItem>
+                  <SelectItem value="64">64</SelectItem>
+                  <SelectItem value="128">128</SelectItem>
+                  <SelectItem value="256">256</SelectItem>
+                </SelectContent>
+              ) : (
+                <SelectContent>
                 <SelectItem value="1">1</SelectItem>
                 <SelectItem value="2">2</SelectItem>
                 <SelectItem value="3">3</SelectItem>
                 <SelectItem value="5">5</SelectItem>
                 <SelectItem value="8">8</SelectItem>
+                <SelectItem value="12">12</SelectItem>
               </SelectContent>
+              )}
             </Select>
           </div>
         </div>

@@ -1,6 +1,15 @@
 // src/gltf/MaterialUpdater.ts
 
-import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh } from '@/gltf/gltfTypes';
+import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage } from '@/gltf/gltfTypes';
+import { findIndex } from 'lodash';
+
+function findAOImageIndex(images: GltfImage[]): number {
+  return images.findIndex(image => image.name && image.name.endsWith('_AO'));
+}
+
+function findAOTextureIndex(textures: GltfTexture[]): number {
+  return textures.findIndex(texture => texture.name && texture.name.endsWith('tex_AmbientOcclusion_A'));
+}
 
 function applyVariants(targetData: GltfData, materialData: MaterialData) {
   if (!targetData.extensions) targetData.extensions = {};
@@ -76,6 +85,8 @@ export async function updateMaterials(
   applyVariantsFlag: boolean,
   applyMoodRotationFlag: boolean,
   materialData: MaterialData,
+  refFileName: string,
+  targetFileName: string,
   progressCallback: (progress: number) => void
 ): Promise<ArrayBuffer> {
   if (!materialData) {
@@ -89,34 +100,37 @@ export async function updateMaterials(
 
     progressCallback(0.2);
 
-    // Check for original AO texture and image
-    const hasOriginalAOTexture = targetData.textures && targetData.textures.length > 0;
-    const hasOriginalAOImage = targetData.images && targetData.images.length > 0;
+    // Find AO image in target data
+    const targetAOImageIndex = findAOImageIndex(targetData.images);
+    if (targetAOImageIndex === -1) {
+      throw new Error(`No AO image found in target data file: ${targetFileName}`);
+    }
+    const targetAOImage = targetData.images[targetAOImageIndex];
 
-    // Preserve the original AO texture and image if they exist
-    const originalAOTexture = hasOriginalAOTexture ? targetData.textures[0] : null;
-    const originalAOImage = hasOriginalAOImage ? targetData.images[0] : null;
+    // Find AO image and texture in reference data
+    const refAOImageIndex = findAOImageIndex(referenceData.images);
+    const refAOTextureIndex = findAOTextureIndex(referenceData.textures);
+    if (refAOImageIndex === -1 || refAOTextureIndex === -1) {
+      throw new Error(`No AO texture found in reference data file: ${refFileName}`);
+    }
+    if (refAOTextureIndex === -1) {
+      throw new Error(`No AO texture found in reference data file: ${refFileName}`);
+    }
 
+    progressCallback(0.4);
+
+    // Replace AO image in reference data
+    referenceData.images[refAOImageIndex] = targetAOImage;
+
+    // Ensure AO texture points to the correct image
+    referenceData.textures[refAOTextureIndex].source = refAOImageIndex;
+
+    // Update materials, textures, and images from reference data
     targetData.materials = referenceData.materials;
     targetData.textures = referenceData.textures;
     targetData.images = referenceData.images;
 
-    progressCallback(0.4);
-
-    // Replace AO texture and image if they existed in the original file
-    if (hasOriginalAOTexture && originalAOTexture) {
-      targetData.textures[0] = originalAOTexture;
-    }
-    if (hasOriginalAOImage && originalAOImage) {
-      targetData.images[0] = originalAOImage;
-    }
-
     targetData.samplers = targetData.samplers || [];
-
-    // Ensure AO texture source is set correctly if it exists
-    if (hasOriginalAOTexture && targetData.textures[0] && targetData.textures[0].source !== 0) {
-      targetData.textures[0].source = 0;
-    }
 
     progressCallback(0.6);
 
@@ -136,7 +150,7 @@ export async function updateMaterials(
     const updatedBlob = new Blob([JSON.stringify(targetData, null, 2)], { type: 'application/json' });
     return await updatedBlob.arrayBuffer();
   } catch (error) {
-    console.error("Error in updateMaterials:", error);
+    console.error(`Error in updateMaterials for target file ${targetFileName}:`, error);
     throw error;
   }
 }

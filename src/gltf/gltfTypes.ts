@@ -21,6 +21,13 @@ export interface MaterialData {
   models?: { [modelName: string]: string[] };
 }
 
+export interface GltfImage {
+  uri?: string;
+  mimeType?: string;
+  bufferView?: number;
+  name?: string;
+}
+
 export interface GltfTexture {
   sampler: number;
   source: number;
@@ -72,7 +79,7 @@ export interface GltfData {
   materials: GltfMaterial[];
   meshes: GltfMesh[];
   textures: GltfTexture[];
-  images: any[];
+  images: GltfImage[];
   samplers: any[];
   extensionsRequired?: string[];
   extensionsUsed?: string[];

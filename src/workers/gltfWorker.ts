@@ -12,7 +12,9 @@ self.onmessage = async (e: MessageEvent) => {
     applyMoodRotation, 
     materialData, 
     processingMode, 
-    fileName 
+    fileName,
+    refFileName,
+    targetFileName
   } = e.data;
 
   try {
@@ -25,6 +27,8 @@ self.onmessage = async (e: MessageEvent) => {
         applyVariants,
         applyMoodRotation,
         materialData,
+        refFileName,
+        targetFileName,
         (progress) => self.postMessage({ type: 'progress', progress })
       );
     } else if (processingMode === 'export') {
