@@ -8,8 +8,8 @@ self.onmessage = async (e: MessageEvent) => {
     referenceData, 
     targetData, 
     model, 
-    applyVariantsFlag, 
-    applyMoodRotationFlag, 
+    applyVariants, 
+    applyMoodRotation, 
     materialData, 
     processingMode, 
     fileName 
@@ -22,8 +22,8 @@ self.onmessage = async (e: MessageEvent) => {
         referenceData,
         targetData,
         model,
-        applyVariantsFlag,
-        applyMoodRotationFlag,
+        applyVariants,
+        applyMoodRotation,
         materialData,
         (progress) => self.postMessage({ type: 'progress', progress })
       );
@@ -32,13 +32,16 @@ self.onmessage = async (e: MessageEvent) => {
         targetData,
         fileName,
         model,
-        applyMoodRotationFlag,
+        applyMoodRotation,
         materialData,
         (progress) => self.postMessage({ type: 'progress', progress })
       );
     }
     self.postMessage({ type: 'complete', result });
   } catch (error) {
-    self.postMessage({ type: 'error', error: error.message });
+    self.postMessage({ 
+      type: 'error', 
+      error: error instanceof Error ? error.message : String(error) 
+    });
   }
 };
