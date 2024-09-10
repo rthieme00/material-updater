@@ -1,4 +1,4 @@
-// src/types/material.ts
+// src/gltf/gltfTypes.ts
 
 export interface Material {
   name: string;

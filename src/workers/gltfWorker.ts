@@ -1,7 +1,7 @@
 // src/workers/gltfWorker.ts
 
-import { updateMaterials, exportIndividualVariants } from '../lib/MaterialUpdater';
-import { GltfData, MaterialData } from '../types/material';
+import { updateMaterials, exportIndividualVariants } from '../gltf/MaterialUpdater';
+import { GltfData, MaterialData } from '../gltf/gltfTypes';
 
 self.onmessage = async (e: MessageEvent) => {
   const { 

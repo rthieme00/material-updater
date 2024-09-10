@@ -1,4 +1,4 @@
-// src/components/ReferenceMaterialsModal.tsx
+// src/components/Modals/ReferenceMaterialsModal.tsx
 
 import { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";

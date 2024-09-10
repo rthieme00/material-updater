@@ -1,4 +1,4 @@
-// src/components/WarningDialog.tsx
+// src/components/Dialogs/WarningDialog.tsx
 
 import React from 'react';
 import {

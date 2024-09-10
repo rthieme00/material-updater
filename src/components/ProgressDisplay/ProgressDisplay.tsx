@@ -1,4 +1,4 @@
-// src/components/ProgressDisplay.tsx
+// src/components/ProgressDisplay/ProgressDisplay.tsx
 
 import React from 'react';
 import { Progress } from "@/components/ui/progress";

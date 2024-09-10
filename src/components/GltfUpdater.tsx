@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { updateMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
-import ProgressDisplay from './ProgressDisplay';
-import WarningDialog from './WarningDialog';
-import ErrorDialog from './ErrorDialog';
-import { MaterialData, GltfData } from '@/types/material';
+import { updateMaterials, exportIndividualVariants } from '@/gltf/MaterialUpdater';
+import ProgressDisplay from './ProgressDisplay/ProgressDisplay';
+import WarningDialog from './Dialogs/WarningDialog';
+import ErrorDialog from './Dialogs/ErrorDialog';
+import { MaterialData, GltfData } from '@/gltf/gltfTypes';
+import { saveFileWithFallback } from '@/utils/fileHandling';
+import PermissionDialog from './Dialogs/PermissionDialog';
 
 declare global {
   interface Window {
@@ -73,6 +75,9 @@ export default function GltfUpdater({
   const targetFilesInputRef = useRef<HTMLInputElement>(null);
   const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
 
+  const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
+  const [hasFileSystemPermission, setHasFileSystemPermission] = useState(false);
+
   const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
@@ -116,12 +121,34 @@ export default function GltfUpdater({
       const handle = await window.showDirectoryPicker();
       setOutputDirectory(handle);
       setOutputDirectoryName(handle.name);
+      setIsPermissionDialogOpen(true);
       setFeedback('Output directory selected successfully.');
     } catch (error) {
       console.error('Error selecting output directory:', error);
       setErrorMessage('Failed to select output directory. Please try again.');
       setIsErrorDialogOpen(true);
     }
+  };
+
+  const requestFileSystemPermission = async () => {
+    if (outputDirectory) {
+      try {
+        // Request permission
+        const permission = await outputDirectory.requestPermission({ mode: 'readwrite' });
+        if (permission === 'granted') {
+          setHasFileSystemPermission(true);
+          setFeedback('File system permission granted.');
+        } else {
+          setHasFileSystemPermission(false);
+          setFeedback('File system permission denied. Files will be downloaded directly.');
+        }
+      } catch (error) {
+        console.error('Error requesting file system permission:', error);
+        setHasFileSystemPermission(false);
+        setFeedback('Error requesting file system permission. Files will be downloaded directly.');
+      }
+    }
+    setIsPermissionDialogOpen(false);
   };
 
   const saveFile = async (fileName: string, content: ArrayBuffer) => {
@@ -182,17 +209,24 @@ export default function GltfUpdater({
               setProgress(overallProgress);
             } else if (e.data.type === 'complete') {
               completedFiles++;
-              if (processingMode === 'update') {
-                await saveFile(file.name, e.data.result);
-                setLatestProcessedFile(file.name);
-              } else if (processingMode === 'export') {
-                for (const variant of e.data.result.exportedVariants) {
-                  await saveFile(variant.fileName, variant.content);
-                  setLatestProcessedFile(variant.fileName);
+              try {
+                if (processingMode === 'update') {
+                  await saveFileWithFallback(file.name, e.data.result, hasFileSystemPermission ? directoryHandleRef.current : null);
+                  setLatestProcessedFile(file.name);
+                } else if (processingMode === 'export') {
+                  for (const variant of e.data.result.exportedVariants) {
+                    await saveFileWithFallback(variant.fileName, variant.content, hasFileSystemPermission ? directoryHandleRef.current : null);
+                    setLatestProcessedFile(variant.fileName);
+                  }
                 }
+                setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
+                resolve(null);
+              } catch (error) {
+                console.error('Error saving file:', error);
+                setErrorMessage(`Error saving file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                setIsErrorDialogOpen(true);
+                reject(error);
               }
-              setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
-              resolve(null);
             } else if (e.data.type === 'error') {
               setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
               reject(new Error(e.data.error));
@@ -226,7 +260,7 @@ export default function GltfUpdater({
 
       workerPool.forEach(worker => worker.terminate());
 
-      setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and saved to selected directory.`);
+      setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and ${hasFileSystemPermission ? 'saved to selected directory' : 'downloaded'}.`);
     } catch (error) {
       console.error('Error processing materials:', error);
       setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -238,7 +272,7 @@ export default function GltfUpdater({
       setLatestProcessedFile(null);
       directoryHandleRef.current = null;
     }
-  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, saveFile, outputDirectory, concurrentProcesses]);
+  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses, hasFileSystemPermission]);
 
   const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
@@ -423,6 +457,12 @@ export default function GltfUpdater({
       >
         {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}
       </Button>
+
+      <PermissionDialog
+        isOpen={isPermissionDialogOpen}
+        onClose={() => setIsPermissionDialogOpen(false)}
+        onConfirm={requestFileSystemPermission}
+      />
 
       <WarningDialog 
         isOpen={isWarningDialogOpen}

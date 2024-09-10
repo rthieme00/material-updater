@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import InputDialog from '../InputDialog';
+import InputDialog from '../Dialogs/InputDialog';
 import MaterialsSection from './MaterialsSection';
 import MeshAssignmentsSection from './MeshAssignmentsSection';
 import { debounce } from 'lodash';

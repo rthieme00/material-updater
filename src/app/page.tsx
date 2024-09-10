@@ -6,12 +6,12 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import FileUpload from '@/components/FileUpload';
+import FileUpload from '@/components/FileUpload/FileUpload';
 import MaterialMeshEditor from '@/components/MaterialMeshEditor/MaterialMeshEditor';
 import GltfUpdater from '@/components/GltfUpdater';
-import ReferenceMaterialsModal from '@/components/ReferenceMaterialsModal';
-import ReferenceMeshesModal from '@/components/ReferenceMeshesModal';
-import { MaterialData } from '@/types/material';
+import ReferenceMaterialsModal from '@/components/Modals/ReferenceMaterialsModal';
+import ReferenceMeshesModal from '@/components/Modals/ReferenceMeshesModal';
+import { MaterialData } from '@/gltf/gltfTypes';
 import { usePersistentFile } from '@/hooks/usePersistentFile';
 
 export default function Home() {

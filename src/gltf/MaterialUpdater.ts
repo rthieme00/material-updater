@@ -1,6 +1,6 @@
-// src/lib/MaterialUpdater.ts
+// src/gltf/MaterialUpdater.ts
 
-import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh } from '@/types/material';
+import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh } from '@/gltf/gltfTypes';
 
 function applyVariants(targetData: GltfData, materialData: MaterialData) {
   if (!targetData.extensions) targetData.extensions = {};
