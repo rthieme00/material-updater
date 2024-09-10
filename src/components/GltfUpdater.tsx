@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { updateMaterials, compareMaterials, exportIndividualVariants, processFileChunk } from '@/lib/MaterialUpdater';
+import { updateMaterials, compareMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -117,7 +117,6 @@ export default function GltfUpdater({
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
   const [differences, setDifferences] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  const [exportIndividualVariantsFlag, setExportIndividualVariantsFlag] = useState(false);
 
   const referenceFileInputRef = useRef<HTMLInputElement>(null);
   const targetFilesInputRef = useRef<HTMLInputElement>(null);
@@ -162,22 +161,35 @@ export default function GltfUpdater({
     return () => clearInterval(intervalId);
   }, []);
 
-  const processFile = async (file: File, referenceData: any, updateFileProgress: (progress: number) => void): Promise<ArrayBuffer> => {
+  const processFile = async (file: File, referenceData: any, updateFileProgress: (progress: number) => void): Promise<any> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = async (event) => {
         try {
           const jsonData = JSON.parse(event.target?.result as string);
-          const updatedData = await updateMaterials(
-            referenceData,
-            jsonData,
-            selectedModel,
-            applyVariants,
-            applyMoodRotation,
-            materialData,
-            updateFileProgress
-          );
-          resolve(updatedData);
+          
+          if (processingMode === 'update') {
+            const updatedData = await updateMaterials(
+              referenceData,
+              jsonData,
+              selectedModel,
+              applyVariants,
+              applyMoodRotation,
+              materialData,
+              updateFileProgress
+            );
+            resolve({ fileName: file.name, content: updatedData });
+          } else if (processingMode === 'export') {
+            const { exportedVariants } = await exportIndividualVariants(
+              jsonData,
+              file.name, // Pass the file name here
+              selectedModel,
+              applyMoodRotation,
+              materialData,
+              updateFileProgress
+            );
+            resolve(exportedVariants);
+          }
         } catch (error) {
           reject(error);
         }
@@ -283,72 +295,83 @@ export default function GltfUpdater({
     }
   };
 
-  const handleUpdate = async () => {
-    if (!referenceFile || targetFiles.length === 0) {
-      setErrorMessage('Please select reference and target files');
-      setIsErrorDialogOpen(true);
-      return;
-    }
+const handleUpdate = async () => {
+  if (!referenceFile || targetFiles.length === 0) {
+    setErrorMessage('Please select reference and target files');
+    setIsErrorDialogOpen(true);
+    return;
+  }
 
-    if (!materialData) {
-      setErrorMessage('Materials.json is not loaded. Please upload a valid Materials.json file.');
-      setIsErrorDialogOpen(true);
-      return;
-    }
+  if (!materialData) {
+    setErrorMessage('Materials.json is not loaded. Please upload a valid Materials.json file.');
+    setIsErrorDialogOpen(true);
+    return;
+  }
 
-    try {
-      // Read reference file
-      const referenceData = JSON.parse(await referenceFile.text());
+  try {
+    // Read reference file
+    const referenceData = JSON.parse(await referenceFile.text());
 
-      // Prompt for directory selection
-      const directoryHandle = await window.showDirectoryPicker();
+    // Prompt for directory selection
+    const directoryHandle = await window.showDirectoryPicker();
 
-      setFeedback('Processing files...');
-      progressRef.current = 0;
-      setCurrentOperation('Updating GLTF files');
-      setCurrentFiles([]);
-      setIsProcessing(true);
+    setFeedback('Processing files...');
+    progressRef.current = 0;
+    setCurrentOperation(processingMode === 'update' ? 'Updating GLTF files' : 'Exporting individual variants');
+    setCurrentFiles([]);
+    setIsProcessing(true);
 
-      const totalFiles = targetFiles.length;
-      let completedFiles = 0;
+    const totalFiles = targetFiles.length;
+    let completedFiles = 0;
 
-      const updateProgress = (fileProgress: number) => {
-        progressRef.current = ((completedFiles + fileProgress) / totalFiles) * 100;
-      };
+    const updateProgress = (fileProgress: number) => {
+      progressRef.current = ((completedFiles + fileProgress) / totalFiles) * 100;
+    };
 
-      // Process files in parallel batches
-      for (let i = 0; i < totalFiles; i += MAX_PARALLEL_PROCESSES) {
-        const batch = targetFiles.slice(i, i + MAX_PARALLEL_PROCESSES);
-        setCurrentFiles(batch.map(file => file.name));
+    // Process files in parallel batches
+    for (let i = 0; i < totalFiles; i += MAX_PARALLEL_PROCESSES) {
+      const batch = targetFiles.slice(i, i + MAX_PARALLEL_PROCESSES);
+      setCurrentFiles(batch.map(file => file.name));
 
-        const batchPromises = batch.map(async (file) => {
-          const updatedContent = await processFile(file, referenceData, (fileProgress) => {
-            updateProgress((i + fileProgress) / MAX_PARALLEL_PROCESSES);
-          });
-          const fileHandle = await directoryHandle.getFileHandle(file.name, { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(updatedContent);
-          await writable.close();
+      const batchPromises = batch.map(async (file) => {
+        const result = await processFile(file, referenceData, (fileProgress) => {
+          updateProgress((i + fileProgress) / MAX_PARALLEL_PROCESSES);
         });
 
-        await Promise.all(batchPromises);
+        if (processingMode === 'update') {
+          const { fileName, content } = result;
+          const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(content);
+          await writable.close();
+        } else if (processingMode === 'export') {
+          for (const variant of result) {
+            const fileHandle = await directoryHandle.getFileHandle(variant.fileName, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(variant.content);
+            await writable.close();
+          }
+        }
+      });
 
-        completedFiles += batch.length;
-      }
+      await Promise.all(batchPromises);
 
-      setCurrentOperation('Processing complete');
-      setFeedback('All files updated and saved to selected directory.');
-    } catch (error) {
-      console.error('Error processing materials:', error);
-      setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setIsErrorDialogOpen(true);
-    } finally {
-      progressRef.current = 100;
-      setCurrentOperation(null);
-      setCurrentFiles([]);
-      setIsProcessing(false);
+      completedFiles += batch.length;
     }
-  };
+
+    setCurrentOperation('Processing complete');
+    setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and saved to selected directory.`);
+  } catch (error) {
+    console.error('Error processing materials:', error);
+    setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    setIsErrorDialogOpen(true);
+  } finally {
+    progressRef.current = 100;
+    setCurrentOperation(null);
+    setCurrentFiles([]);
+    setIsProcessing(false);
+  }
+};
 
   return (
     <div className="space-y-6">
