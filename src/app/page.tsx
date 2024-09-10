@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,23 +11,43 @@ import MaterialMeshEditor from '@/components/MaterialMeshEditor/MaterialMeshEdit
 import GltfUpdater from '@/components/GltfUpdater';
 import ReferenceMaterialsModal from '@/components/ReferenceMaterialsModal';
 import ReferenceMeshesModal from '@/components/ReferenceMeshesModal';
-
-interface MaterialData {
-  materials: Array<{ name: string; tags: string[] }>;
-  meshAssignments: Record<string, {
-    defaultMaterial: string;
-    variants: Array<{ name: string; material: string }>;
-  }>;
-}
+import { MaterialData } from '@/types/material';
+import { usePersistentFile } from '@/hooks/usePersistentFile';
 
 export default function Home() {
   const [materialData, setMaterialData] = useState<MaterialData | null>(null);
   const [materialFileName, setMaterialFileName] = useState<string | null>(null);
+  const [referenceFileState, setReferenceFile, clearReferenceFile] = usePersistentFile('referenceFile');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isReferenceMaterialsModalOpen, setIsReferenceMaterialsModalOpen] = useState(false);
   const [isReferenceMeshesModalOpen, setIsReferenceMeshesModalOpen] = useState(false);
   const [referenceMaterials, setReferenceMaterials] = useState<string[]>([]);
   const [referenceMeshes, setReferenceMeshes] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Load material data from localStorage
+    const storedMaterialData = localStorage.getItem('materialData');
+    if (storedMaterialData) {
+      try {
+        const parsedData = JSON.parse(storedMaterialData) as MaterialData;
+        setMaterialData(parsedData);
+        setMaterialFileName(localStorage.getItem('materialFileName') || null);
+        if (parsedData.materials && Array.isArray(parsedData.materials)) {
+          setReferenceMaterials(parsedData.materials.map(m => m.name));
+        }
+      } catch (error) {
+        console.error('Error parsing stored material data:', error);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    // Save material data to localStorage whenever it changes
+    if (materialData) {
+      localStorage.setItem('materialData', JSON.stringify(materialData));
+      localStorage.setItem('materialFileName', materialFileName || '');
+    }
+  }, [materialData, materialFileName]);
 
   const handleFileUpload = (file: File) => {
     const reader = new FileReader();
@@ -78,9 +98,9 @@ export default function Home() {
   const handleClear = () => {
     setMaterialData(null);
     setMaterialFileName(null);
-    setReferenceMaterials([]);
-    setReferenceMeshes([]);
-    setFeedback('Materials.json cleared');
+    setFeedback('All data cleared');
+    localStorage.removeItem('materialData');
+    localStorage.removeItem('materialFileName');
   };
 
   const updateMaterialData = (updatedData: MaterialData) => {
@@ -102,15 +122,23 @@ export default function Home() {
               <CardTitle>Update GLTF Files</CardTitle>
             </CardHeader>
             <CardContent>
-              <GltfUpdater 
-                materialData={materialData} 
-                setFeedback={setFeedback}
-                setReferenceMaterials={setReferenceMaterials}
-                setReferenceMeshes={setReferenceMeshes}
-                openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
-                openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
-                updateMaterialData={updateMaterialData}
-              />
+              {materialData && (
+                <GltfUpdater 
+                  materialData={materialData} 
+                  referenceFile={referenceFileState.file}
+                  setReferenceFile={setReferenceFile}
+                  referenceFileName={referenceFileState.fileName}
+                  referenceFilePath={referenceFileState.filePath}
+                  isReferenceFileStored={referenceFileState.isStored}
+                  clearReferenceFile={clearReferenceFile}
+                  setFeedback={setFeedback}
+                  setReferenceMaterials={setReferenceMaterials}
+                  setReferenceMeshes={setReferenceMeshes}
+                  openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
+                  openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
+                  updateMaterialData={updateMaterialData}
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -132,7 +160,7 @@ export default function Home() {
               <CardContent>
                 <MaterialMeshEditor data={materialData} onSave={handleSave} />
                 <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
-                  Clear Materials
+                  Clear All Data
                 </Button>
               </CardContent>
             </Card>

@@ -15,27 +15,21 @@ export interface MeshAssignment {
   variants: Variant[];
 }
 
-export interface ModelAssignment {
-  [modelName: string]: string[];
-}
-
 export interface MaterialData {
   materials: Material[];
   meshAssignments: { [meshName: string]: MeshAssignment };
-  materialVariants?: { [key: string]: string[] | { [key: string]: string[] } };
-  models?: ModelAssignment;
-}
-
-export interface ExportedVariant {
-  fileName: string;
-  content: ArrayBuffer;
+  models?: { [modelName: string]: string[] };
 }
 
 export interface GltfTexture {
-  index: number;
+  sampler: number;
+  source: number;
+  name?: string;
   extensions?: {
     KHR_texture_transform?: {
-      rotation: number;
+      offset?: [number, number];
+      rotation?: number;
+      scale?: [number, number];
     };
   };
 }
@@ -43,42 +37,45 @@ export interface GltfTexture {
 export interface GltfMaterial {
   name: string;
   pbrMetallicRoughness?: {
-    baseColorTexture?: GltfTexture;
-    metallicRoughnessTexture?: GltfTexture;
+    baseColorTexture?: { index: number; texCoord?: number };
+    metallicRoughnessTexture?: { index: number; texCoord?: number };
   };
-  normalTexture?: GltfTexture;
-  occlusionTexture?: GltfTexture;
-  emissiveTexture?: GltfTexture;
+  normalTexture?: { index: number; texCoord?: number; scale?: number };
+  occlusionTexture?: { index: number; texCoord?: number; strength?: number };
+  emissiveTexture?: { index: number; texCoord?: number };
   extensions?: {
     KHR_materials_sheen?: {
-      sheenColorTexture?: GltfTexture;
-      sheenRoughnessTexture?: GltfTexture;
-    };
-  };
-}
-
-export interface GltfPrimitive {
-  material?: number;
-  extensions?: {
-    KHR_materials_variants?: {
-      mappings: Array<{
-        material: number;
-        variants: number[];
-      }>;
+      sheenColorTexture?: { index: number; texCoord?: number };
+      sheenRoughnessTexture?: { index: number; texCoord?: number };
     };
   };
 }
 
 export interface GltfMesh {
   name: string;
-  primitives: GltfPrimitive[];
+  primitives: Array<{
+    attributes: { [key: string]: number };
+    material?: number;
+    extensions?: {
+      KHR_materials_variants?: {
+        mappings: Array<{
+          material: number;
+          variants: number[];
+        }>;
+      };
+    };
+  }>;
 }
 
 export interface GltfData {
+  asset: { version: string; generator?: string };
   materials: GltfMaterial[];
   meshes: GltfMesh[];
-  textures: any[];
+  textures: GltfTexture[];
   images: any[];
+  samplers: any[];
+  extensionsRequired?: string[];
+  extensionsUsed?: string[];
   extensions?: {
     KHR_materials_variants?: {
       variants: Array<{ name: string }>;
@@ -86,19 +83,7 @@ export interface GltfData {
   };
 }
 
-export interface ProcessFileOptions {
+export interface ExportedVariant {
   fileName: string;
-  model: string;
-  applyVariants: boolean;
-  applyMoodRotation: boolean;
-  materialData: MaterialData;
-}
-
-export interface UpdateMaterialsResult {
-  updatedData: GltfData;
-  fileName: string;
-}
-
-export interface ExportVariantsResult {
-  exportedVariants: ExportedVariant[];
+  content: ArrayBuffer;
 }

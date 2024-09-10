@@ -1,24 +1,16 @@
 // src/components/GltfUpdater.tsx
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { updateMaterials, compareMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import JSZip from 'jszip';
-import { saveAs } from 'file-saver';
-import StreamSaver from 'streamsaver';
+import { updateMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
+import ProgressDisplay from './ProgressDisplay';
+import WarningDialog from './WarningDialog';
+import ErrorDialog from './ErrorDialog';
+import { MaterialData, GltfData } from '@/types/material';
 
 declare global {
   interface Window {
@@ -26,80 +18,32 @@ declare global {
   }
 }
 
+const CHUNK_SIZE = 5;
+
 interface GltfUpdaterProps {
-  materialData: any;
+  materialData: MaterialData;
+  referenceFile: File | null;
+  setReferenceFile: (file: File, path: string) => void;
+  clearReferenceFile: () => void;
+  referenceFileName: string | null;
+  referenceFilePath: string | null;
+  isReferenceFileStored: boolean;
   setFeedback: (feedback: string) => void;
   setReferenceMaterials: (materials: string[]) => void;
   setReferenceMeshes: (meshes: string[]) => void;
   openReferenceMaterialsModal: () => void;
   openReferenceMeshesModal: () => void;
-  updateMaterialData: (updatedData: any) => void;
+  updateMaterialData: (updatedData: MaterialData) => void;
 }
 
-interface WarningDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  differences: string[];
-  onAddMissingMaterials: () => void;
-}
-
-interface ErrorDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  message: string;
-}
-
-const CACHE_VERSION = 1;
-const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunk size
-const PROGRESS_UPDATE_INTERVAL = 100; // ms
-const MAX_PARALLEL_PROCESSES = 4; // Adjust based on system capabilities
-
-function WarningDialog({ isOpen, onClose, differences, onAddMissingMaterials }: WarningDialogProps) {
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Material Differences Detected</DialogTitle>
-          <DialogDescription>
-            The following differences were found between the reference file and the JSON data:
-          </DialogDescription>
-        </DialogHeader>
-        <div className="py-4">
-          <ul className="list-disc pl-4">
-            {differences.map((diff, index) => (
-              <li key={index}>{diff}</li>
-            ))}
-          </ul>
-        </div>
-        <DialogFooter>
-          <Button onClick={onClose}>Ignore</Button>
-          <Button onClick={onAddMissingMaterials}>Add Missing Materials</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ErrorDialog({ isOpen, onClose, message }: ErrorDialogProps) {
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Error</DialogTitle>
-        </DialogHeader>
-        <div className="py-4">
-          <p>{message}</p>
-        </div>
-        <DialogFooter>
-          <Button onClick={onClose}>Close</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export default function GltfUpdater({ 
-  materialData, 
+export default function GltfUpdater({
+  materialData,
+  referenceFile,
+  setReferenceFile,
+  clearReferenceFile,
+  referenceFileName,
+  referenceFilePath,
+  isReferenceFileStored,
   setFeedback,
   setReferenceMaterials,
   setReferenceMeshes,
@@ -107,96 +51,61 @@ export default function GltfUpdater({
   openReferenceMeshesModal,
   updateMaterialData
 }: GltfUpdaterProps) {
-  const [referenceFile, setReferenceFile] = useState<File | null>(null);
-  const [referenceData, setReferenceData] = useState<any | null>(null);
   const [targetFiles, setTargetFiles] = useState<File[]>([]);
   const [applyVariants, setApplyVariants] = useState(true);
   const [applyMoodRotation, setApplyMoodRotation] = useState(true);
   const [selectedModel, setSelectedModel] = useState('Regular');
+  const [processingMode, setProcessingMode] = useState<'update' | 'export'>('update');
   const [isWarningDialogOpen, setIsWarningDialogOpen] = useState(false);
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false);
-  const [differences, setDifferences] = useState<string[]>([]);
+  const [warningMessage, setWarningMessage] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [currentOperation, setCurrentOperation] = useState<string | null>(null);
+  const [currentChunk, setCurrentChunk] = useState(0);
+  const [totalChunks, setTotalChunks] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const referenceFileInputRef = useRef<HTMLInputElement>(null);
   const targetFilesInputRef = useRef<HTMLInputElement>(null);
-
-  const getCacheKey = useCallback((file: File | undefined, variant: string) => {
-    if (!file) return null;
-    return `${CACHE_VERSION}-${file.name}-${file.lastModified}-${variant}`;
-  }, []);
-
-  const [progress, setProgress] = useState(0);
-  const [currentOperation, setCurrentOperation] = useState<string | null>(null);
-  const [currentFiles, setCurrentFiles] = useState<string[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processingMode, setProcessingMode] = useState<'update' | 'export'>('update');
-  const progressRef = useRef(0);
   const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
 
-  // Load saved data from localStorage on component mount
-  useEffect(() => {
-    const savedMaterialData = localStorage.getItem('materialData');
-    if (savedMaterialData) {
-      updateMaterialData(JSON.parse(savedMaterialData));
-    }
-  }, []);
-
-  // Save materialData to localStorage whenever it changes
-  useEffect(() => {
-    if (materialData) {
-      localStorage.setItem('materialData', JSON.stringify(materialData));
-    }
-  }, [materialData]);
-
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setProgress(prev => {
-        const target = progressRef.current;
-        const step = (target - prev) * 0.2; // Increased for faster updates
-        return Math.min(prev + step, 100);
-      });
-    }, PROGRESS_UPDATE_INTERVAL);
-
-    return () => clearInterval(intervalId);
-  }, []);
-
-  const processFile = async (file: File, referenceData: any, updateFileProgress: (progress: number) => void): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const jsonData = JSON.parse(event.target?.result as string);
-          
-          if (processingMode === 'update') {
-            const updatedData = await updateMaterials(
-              referenceData,
-              jsonData,
-              selectedModel,
-              applyVariants,
-              applyMoodRotation,
-              materialData,
-              updateFileProgress
-            );
-            resolve({ fileName: file.name, content: updatedData });
-          } else if (processingMode === 'export') {
-            const { exportedVariants } = await exportIndividualVariants(
-              jsonData,
-              file.name, // Pass the file name here
-              selectedModel,
-              applyMoodRotation,
-              materialData,
-              updateFileProgress
-            );
-            resolve(exportedVariants);
-          }
-        } catch (error) {
-          reject(error);
+  const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+      setReferenceFile(file, event.target.value);
+      setFeedback(`Reference file selected: ${file.name}`);
+      
+      try {
+        const content = await file.text();
+        const data = JSON.parse(content) as GltfData;
+        
+        if (!data.materials || !data.meshes) {
+          throw new Error("Invalid GLTF file: missing materials or meshes");
         }
-      };
-      reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
-      reader.readAsText(file);
-    });
+  
+        setReferenceMaterials(data.materials.map(m => m.name));
+        setReferenceMeshes(data.meshes.map(m => m.name));
+      } catch (error) {
+        console.error("Error processing reference file:", error);
+        setErrorMessage(`Error processing reference file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setIsErrorDialogOpen(true);
+      }
+    }
+  };
+
+  const handleTargetFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      const newFiles = Array.from(event.target.files);
+      setTargetFiles(prev => [...prev, ...newFiles]);
+      setFeedback(`${newFiles.length} target file(s) added`);
+    }
+  };
+
+  const handleClearFiles = () => {
+    setTargetFiles([]);
+    setFeedback('All files cleared');
+    if (targetFilesInputRef.current) targetFilesInputRef.current.value = '';
   };
 
   const saveFile = async (fileName: string, content: ArrayBuffer) => {
@@ -209,192 +118,170 @@ export default function GltfUpdater({
     await writable.close();
   };
 
-  const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      const file = event.target.files[0];
-      setReferenceFile(file);
-      setFeedback(`Reference file selected: ${file.name}`);
+  const processChunk = async (
+    chunk: File[],
+    referenceData: GltfData,
+    chunkIndex: number,
+    totalChunks: number,
+    totalFiles: number
+  ) => {
+    for (let i = 0; i < chunk.length; i++) {
+      const file = chunk[i];
+      const fileIndex = chunkIndex * CHUNK_SIZE + i;
+      setCurrentOperation(`Processing ${file.name} (${fileIndex + 1}/${totalFiles})`);
       
-      if (!materialData) {
-        setErrorMessage('Please upload a Materials.json file before selecting a reference file.');
-        setIsErrorDialogOpen(true);
-        return;
-      }
-  
       try {
         const content = await file.text();
-        const data = JSON.parse(content);
+        const jsonData = JSON.parse(content) as GltfData;
         
-        if (!data.materials || !data.meshes) {
-          throw new Error("Invalid GLTF file: missing materials or meshes");
-        }
-  
-        setReferenceData(data);
-        const materials = data.materials.map((m: any) => m.name);
-        const meshes = data.meshes.map((m: any) => m.name);
-        setReferenceMaterials(materials);
-        setReferenceMeshes(meshes);
-  
-        const diffs = compareMaterials(data, materialData);
-        if (diffs.length > 0) {
-          setDifferences(diffs);
-          setIsWarningDialogOpen(true);
+        if (processingMode === 'update') {
+          const result = await updateMaterials(
+            referenceData,
+            jsonData,
+            selectedModel,
+            applyVariants,
+            applyMoodRotation,
+            materialData,
+            (fileProgress) => {
+              const overallProgress = (fileIndex + fileProgress) / totalFiles * 100;
+              setProgress(overallProgress);
+            }
+          );
+          
+          await saveFile(file.name, result);
+        } else if (processingMode === 'export') {
+          const { exportedVariants } = await exportIndividualVariants(
+            jsonData,
+            file.name,
+            selectedModel,
+            applyMoodRotation,
+            materialData,
+            (fileProgress) => {
+              const overallProgress = (fileIndex + fileProgress) / totalFiles * 100;
+              setProgress(overallProgress);
+            }
+          );
+          
+          for (const variant of exportedVariants) {
+            await saveFile(variant.fileName, variant.content);
+          }
         }
       } catch (error) {
-        console.error("Error processing reference file:", error);
-        setErrorMessage(`Error processing reference file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        console.error(`Error processing ${file.name}:`, error);
+        setErrorMessage(`Error processing ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         setIsErrorDialogOpen(true);
       }
     }
   };
 
-  const handleAddMissingMaterials = useCallback(() => {
-    if (!referenceData || !materialData) {
-      setErrorMessage('Reference data or material data is missing');
+  const handleUpdate = async () => {
+    if (!referenceFile || targetFiles.length === 0 || !materialData) {
+      setErrorMessage('Please select reference and target files, and ensure material data is loaded.');
       setIsErrorDialogOpen(true);
       return;
     }
-  
-    const updatedMaterialData = { ...materialData };
-    const referenceMaterials = referenceData.materials || [];
-    const jsonMaterials = updatedMaterialData.materials || [];
-  
-    referenceMaterials.forEach((refMaterial: any) => {
-      if (!jsonMaterials.some((jsonMaterial: any) => jsonMaterial.name === refMaterial.name)) {
-        jsonMaterials.push({ name: refMaterial.name, tags: [] });
+
+    try {
+      const referenceContent = await referenceFile.text();
+      const referenceData = JSON.parse(referenceContent) as GltfData;
+
+      const handle = await window.showDirectoryPicker();
+      directoryHandleRef.current = handle;
+
+      setFeedback('Processing files...');
+      setProgress(0);
+      setCurrentOperation('Preparing to process files');
+      setIsProcessing(true);
+
+      const chunks = [];
+      for (let i = 0; i < targetFiles.length; i += CHUNK_SIZE) {
+        chunks.push(targetFiles.slice(i, i + CHUNK_SIZE));
       }
-    });
-  
-    updatedMaterialData.materials = jsonMaterials;
-  
-    updateMaterialData(updatedMaterialData);
-  
-    setFeedback('Missing materials added to JSON');
-    setIsWarningDialogOpen(false);
-  }, [referenceData, materialData, updateMaterialData, setFeedback]);
+      setTotalChunks(chunks.length);
 
-  const handleTargetFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const newFiles = Array.from(event.target.files);
-      setTargetFiles(prev => [...prev, ...newFiles]);
-      setFeedback(`${newFiles.length} target file(s) added`);
+      for (let i = 0; i < chunks.length; i++) {
+        setCurrentChunk(i + 1);
+        await processChunk(chunks[i], referenceData, i, chunks.length, targetFiles.length);
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      setCurrentOperation('Processing complete');
+      setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and saved to selected directory.`);
+    } catch (error) {
+      console.error('Error processing materials:', error);
+      setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsErrorDialogOpen(true);
+    } finally {
+      setProgress(100);
+      setCurrentOperation(null);
+      setIsProcessing(false);
+      directoryHandleRef.current = null;
     }
   };
 
-  const handleClearFiles = () => {
-    setReferenceFile(null);
-    setTargetFiles([]);
-    setFeedback('All files cleared');
-
-    // Reset the file input elements
+  const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
-      referenceFileInputRef.current.value = '';
-    }
-    if (targetFilesInputRef.current) {
-      targetFilesInputRef.current.value = '';
+      referenceFileInputRef.current.click();
     }
   };
-
-const handleUpdate = async () => {
-  if (!referenceFile || targetFiles.length === 0) {
-    setErrorMessage('Please select reference and target files');
-    setIsErrorDialogOpen(true);
-    return;
-  }
-
-  if (!materialData) {
-    setErrorMessage('Materials.json is not loaded. Please upload a valid Materials.json file.');
-    setIsErrorDialogOpen(true);
-    return;
-  }
-
-  try {
-    // Read reference file
-    const referenceData = JSON.parse(await referenceFile.text());
-
-    // Prompt for directory selection
-    const directoryHandle = await window.showDirectoryPicker();
-
-    setFeedback('Processing files...');
-    progressRef.current = 0;
-    setCurrentOperation(processingMode === 'update' ? 'Updating GLTF files' : 'Exporting individual variants');
-    setCurrentFiles([]);
-    setIsProcessing(true);
-
-    const totalFiles = targetFiles.length;
-    let completedFiles = 0;
-
-    const updateProgress = (fileProgress: number) => {
-      progressRef.current = ((completedFiles + fileProgress) / totalFiles) * 100;
-    };
-
-    // Process files in parallel batches
-    for (let i = 0; i < totalFiles; i += MAX_PARALLEL_PROCESSES) {
-      const batch = targetFiles.slice(i, i + MAX_PARALLEL_PROCESSES);
-      setCurrentFiles(batch.map(file => file.name));
-
-      const batchPromises = batch.map(async (file) => {
-        const result = await processFile(file, referenceData, (fileProgress) => {
-          updateProgress((i + fileProgress) / MAX_PARALLEL_PROCESSES);
-        });
-
-        if (processingMode === 'update') {
-          const { fileName, content } = result;
-          const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(content);
-          await writable.close();
-        } else if (processingMode === 'export') {
-          for (const variant of result) {
-            const fileHandle = await directoryHandle.getFileHandle(variant.fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(variant.content);
-            await writable.close();
-          }
-        }
-      });
-
-      await Promise.all(batchPromises);
-
-      completedFiles += batch.length;
-    }
-
-    setCurrentOperation('Processing complete');
-    setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and saved to selected directory.`);
-  } catch (error) {
-    console.error('Error processing materials:', error);
-    setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    setIsErrorDialogOpen(true);
-  } finally {
-    progressRef.current = 100;
-    setCurrentOperation(null);
-    setCurrentFiles([]);
-    setIsProcessing(false);
-  }
-};
 
   return (
     <div className="space-y-6">
       <div>
         <Label htmlFor="referenceFile">Reference File:</Label>
-        <Input id="referenceFile" type="file" accept=".gltf,.glb" onChange={handleReferenceFileSelect} ref={referenceFileInputRef} className="mt-1" />
-        {referenceFile && (
-          <div className="mt-2 flex justify-between items-center">
-            <p className="text-sm">Selected: {referenceFile.name}</p>
-            <div className="space-x-2">
-              <Button onClick={openReferenceMaterialsModal} variant="outline" size="sm">
-                View Materials
-              </Button>
-              <Button onClick={openReferenceMeshesModal} variant="outline" size="sm">
-                View Meshes
-              </Button>
+        <div className="flex items-center space-x-2">
+          <Input 
+            id="referenceFile" 
+            type="file" 
+            accept=".gltf,.glb" 
+            onChange={handleReferenceFileSelect} 
+            ref={referenceFileInputRef} 
+            className="mt-1" 
+          />
+          {isReferenceFileStored && !referenceFile && (
+            <Button 
+              onClick={handleReselectFile}
+              variant="outline"
+            >
+              Reselect File
+            </Button>
+          )}
+        </div>
+        {(referenceFileName || isReferenceFileStored) && (
+          <div className="mt-2">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-sm">
+                  {referenceFile ? `Selected: ${referenceFile.name}` : `Stored: ${referenceFileName}`}
+                </p>
+                {!referenceFile && isReferenceFileStored && (
+                  <p className="text-xs text-gray-500 mt-1">File needs to be reselected after page refresh</p>
+                )}
+              </div>
+              <div className="flex space-x-2">
+                <Button onClick={openReferenceMaterialsModal} variant="outline" size="sm">
+                  View Materials
+                </Button>
+                <Button onClick={openReferenceMeshesModal} variant="outline" size="sm">
+                  View Meshes
+                </Button>
+              </div>
             </div>
           </div>
         )}
       </div>
+
       <div>
         <Label htmlFor="targetFiles">Target Files:</Label>
-        <Input id="targetFiles" type="file" accept=".gltf,.glb" multiple onChange={handleTargetFilesSelect} ref={targetFilesInputRef} className="mt-1" />
+        <Input 
+          id="targetFiles" 
+          type="file" 
+          accept=".gltf,.glb" 
+          multiple 
+          onChange={handleTargetFilesSelect} 
+          ref={targetFilesInputRef} 
+          className="mt-1" 
+        />
         {targetFiles.length > 0 && (
           <div className="mt-2">
             <p className="font-semibold">Selected files:</p>
@@ -406,6 +293,7 @@ const handleUpdate = async () => {
           </div>
         )}
       </div>
+
       <div className="flex space-x-4">
         <div className="flex items-center space-x-2">
           <Checkbox 
@@ -424,6 +312,7 @@ const handleUpdate = async () => {
           <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
         </div>
       </div>
+
       {materialData && materialData.models && (
         <div>
           <Label htmlFor="modelSelect">Select Model:</Label>
@@ -441,6 +330,7 @@ const handleUpdate = async () => {
           </Select>
         </div>
       )}
+
       <div className="flex space-x-4">
         <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
           <SelectTrigger>
@@ -452,39 +342,32 @@ const handleUpdate = async () => {
           </SelectContent>
         </Select>
       </div>
+
       <Button onClick={handleClearFiles} variant="outline" className="w-full">
-        Clear All Files
+        Clear Target Files
       </Button>
-      {currentOperation && (
-        <div className="w-full">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium">
-              {currentOperation}
-            </span>
-            <span className="text-sm font-medium">{progress.toFixed(2)}%</span>
-          </div>
-          <Progress value={progress} className="w-full" />
-          {currentFiles.length > 0 && (
-            <div className="mt-2 text-sm">
-              Processing: {currentFiles.join(', ')}
-            </div>
-          )}
-        </div>
-      )}
+
+      <ProgressDisplay
+        currentOperation={currentOperation}
+        progress={progress}
+        currentChunk={currentChunk}
+        totalChunks={totalChunks}
+      />
 
       <Button 
         onClick={handleUpdate} 
-        disabled={!referenceFile || targetFiles.length === 0 || !materialData || isProcessing} 
+        disabled={(!referenceFile && !isReferenceFileStored) || targetFiles.length === 0 || !materialData || isProcessing} 
         className="w-full"
       >
         {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}
       </Button>
+
       <WarningDialog 
         isOpen={isWarningDialogOpen}
         onClose={() => setIsWarningDialogOpen(false)}
-        differences={differences}
-        onAddMissingMaterials={handleAddMissingMaterials}
+        message={warningMessage}
       />
+
       <ErrorDialog
         isOpen={isErrorDialogOpen}
         onClose={() => setIsErrorDialogOpen(false)}
