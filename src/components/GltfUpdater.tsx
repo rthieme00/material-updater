@@ -1,12 +1,13 @@
 // src/components/GltfUpdater.tsx
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { updateMaterials, compareMaterials, exportIndividualVariants } from '@/lib/MaterialUpdater';
+import { updateMaterials, compareMaterials, exportIndividualVariants, processFileChunk } from '@/lib/MaterialUpdater';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+import StreamSaver from 'streamsaver';
+
+declare global {
+  interface Window {
+    showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
+  }
+}
 
 interface GltfUpdaterProps {
   materialData: any;
@@ -38,6 +48,11 @@ interface ErrorDialogProps {
   onClose: () => void;
   message: string;
 }
+
+const CACHE_VERSION = 1;
+const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunk size
+const PROGRESS_UPDATE_INTERVAL = 100; // ms
+const MAX_PARALLEL_PROCESSES = 4; // Adjust based on system capabilities
 
 function WarningDialog({ isOpen, onClose, differences, onAddMissingMaterials }: WarningDialogProps) {
   return (
@@ -103,6 +118,84 @@ export default function GltfUpdater({
   const [differences, setDifferences] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [exportIndividualVariantsFlag, setExportIndividualVariantsFlag] = useState(false);
+
+  const referenceFileInputRef = useRef<HTMLInputElement>(null);
+  const targetFilesInputRef = useRef<HTMLInputElement>(null);
+
+  const getCacheKey = useCallback((file: File | undefined, variant: string) => {
+    if (!file) return null;
+    return `${CACHE_VERSION}-${file.name}-${file.lastModified}-${variant}`;
+  }, []);
+
+  const [progress, setProgress] = useState(0);
+  const [currentOperation, setCurrentOperation] = useState<string | null>(null);
+  const [currentFiles, setCurrentFiles] = useState<string[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMode, setProcessingMode] = useState<'update' | 'export'>('update');
+  const progressRef = useRef(0);
+  const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
+
+  // Load saved data from localStorage on component mount
+  useEffect(() => {
+    const savedMaterialData = localStorage.getItem('materialData');
+    if (savedMaterialData) {
+      updateMaterialData(JSON.parse(savedMaterialData));
+    }
+  }, []);
+
+  // Save materialData to localStorage whenever it changes
+  useEffect(() => {
+    if (materialData) {
+      localStorage.setItem('materialData', JSON.stringify(materialData));
+    }
+  }, [materialData]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setProgress(prev => {
+        const target = progressRef.current;
+        const step = (target - prev) * 0.2; // Increased for faster updates
+        return Math.min(prev + step, 100);
+      });
+    }, PROGRESS_UPDATE_INTERVAL);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const processFile = async (file: File, referenceData: any, updateFileProgress: (progress: number) => void): Promise<ArrayBuffer> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const jsonData = JSON.parse(event.target?.result as string);
+          const updatedData = await updateMaterials(
+            referenceData,
+            jsonData,
+            selectedModel,
+            applyVariants,
+            applyMoodRotation,
+            materialData,
+            updateFileProgress
+          );
+          resolve(updatedData);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
+      reader.readAsText(file);
+    });
+  };
+
+  const saveFile = async (fileName: string, content: ArrayBuffer) => {
+    if (!directoryHandleRef.current) {
+      throw new Error("Directory not selected");
+    }
+    const fileHandle = await directoryHandleRef.current.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  };
 
   const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -176,6 +269,20 @@ export default function GltfUpdater({
     }
   };
 
+  const handleClearFiles = () => {
+    setReferenceFile(null);
+    setTargetFiles([]);
+    setFeedback('All files cleared');
+
+    // Reset the file input elements
+    if (referenceFileInputRef.current) {
+      referenceFileInputRef.current.value = '';
+    }
+    if (targetFilesInputRef.current) {
+      targetFilesInputRef.current.value = '';
+    }
+  };
+
   const handleUpdate = async () => {
     if (!referenceFile || targetFiles.length === 0) {
       setErrorMessage('Please select reference and target files');
@@ -190,77 +297,56 @@ export default function GltfUpdater({
     }
 
     try {
-      setFeedback('Updating files...');
-      if (exportIndividualVariantsFlag) {
-        const exportedFiles = await exportIndividualVariants(
-          referenceFile,
-          targetFiles,
-          selectedModel,
-          applyMoodRotation,
-          materialData
-        );
-        
-        // Create a zip file with all exported variants
-        const JSZip = (await import('jszip')).default;
-        const zip = new JSZip();
-        exportedFiles.forEach(({ fileName, content }) => {
-          zip.file(fileName, content);
-        });
-        const content = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(content);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'gltf_variants.zip';
-        a.click();
-        URL.revokeObjectURL(url);
-        setFeedback('Exported individual variants as zip');
-      } else {
-        const updatedFiles = await updateMaterials(
-          referenceFile,
-          targetFiles,
-          selectedModel,
-          applyVariants,
-          applyMoodRotation,
-          materialData
-        );
+      // Read reference file
+      const referenceData = JSON.parse(await referenceFile.text());
 
-        if (updatedFiles.length === 0) {
-          setErrorMessage('No files were updated. Please check your input and try again.');
-          setIsErrorDialogOpen(true);
-          return;
-        }
+      // Prompt for directory selection
+      const directoryHandle = await window.showDirectoryPicker();
 
-        if (updatedFiles.length === 1) {
-          // Download single file
-          const blob = new Blob([updatedFiles[0]], { type: 'application/octet-stream' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${targetFiles[0].name}`;
-          a.click();
-          URL.revokeObjectURL(url);
-          setFeedback(`Updated file downloaded: ${targetFiles[0].name}`);
-        } else if (updatedFiles.length > 1) {
-          // Create zip file and download
-          const JSZip = (await import('jszip')).default;
-          const zip = new JSZip();
-          updatedFiles.forEach((fileContent, index) => {
-            zip.file(`${targetFiles[index].name}`, fileContent);
+      setFeedback('Processing files...');
+      progressRef.current = 0;
+      setCurrentOperation('Updating GLTF files');
+      setCurrentFiles([]);
+      setIsProcessing(true);
+
+      const totalFiles = targetFiles.length;
+      let completedFiles = 0;
+
+      const updateProgress = (fileProgress: number) => {
+        progressRef.current = ((completedFiles + fileProgress) / totalFiles) * 100;
+      };
+
+      // Process files in parallel batches
+      for (let i = 0; i < totalFiles; i += MAX_PARALLEL_PROCESSES) {
+        const batch = targetFiles.slice(i, i + MAX_PARALLEL_PROCESSES);
+        setCurrentFiles(batch.map(file => file.name));
+
+        const batchPromises = batch.map(async (file) => {
+          const updatedContent = await processFile(file, referenceData, (fileProgress) => {
+            updateProgress((i + fileProgress) / MAX_PARALLEL_PROCESSES);
           });
-          const content = await zip.generateAsync({ type: 'blob' });
-          const url = URL.createObjectURL(content);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'gltf_files.zip';
-          a.click();
-          URL.revokeObjectURL(url);
-          setFeedback('Updated files downloaded as zip');
-        }
+          const fileHandle = await directoryHandle.getFileHandle(file.name, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(updatedContent);
+          await writable.close();
+        });
+
+        await Promise.all(batchPromises);
+
+        completedFiles += batch.length;
       }
+
+      setCurrentOperation('Processing complete');
+      setFeedback('All files updated and saved to selected directory.');
     } catch (error) {
-      console.error('Error updating materials:', error);
-      setErrorMessage(`Error updating materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error processing materials:', error);
+      setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsErrorDialogOpen(true);
+    } finally {
+      progressRef.current = 100;
+      setCurrentOperation(null);
+      setCurrentFiles([]);
+      setIsProcessing(false);
     }
   };
 
@@ -268,7 +354,7 @@ export default function GltfUpdater({
     <div className="space-y-6">
       <div>
         <Label htmlFor="referenceFile">Reference File:</Label>
-        <Input id="referenceFile" type="file" accept=".gltf,.glb" onChange={handleReferenceFileSelect} className="mt-1" />
+        <Input id="referenceFile" type="file" accept=".gltf,.glb" onChange={handleReferenceFileSelect} ref={referenceFileInputRef} className="mt-1" />
         {referenceFile && (
           <div className="mt-2 flex justify-between items-center">
             <p className="text-sm">Selected: {referenceFile.name}</p>
@@ -285,7 +371,7 @@ export default function GltfUpdater({
       </div>
       <div>
         <Label htmlFor="targetFiles">Target Files:</Label>
-        <Input id="targetFiles" type="file" accept=".gltf,.glb" multiple onChange={handleTargetFilesSelect} className="mt-1" />
+        <Input id="targetFiles" type="file" accept=".gltf,.glb" multiple onChange={handleTargetFilesSelect} ref={targetFilesInputRef} className="mt-1" />
         {targetFiles.length > 0 && (
           <div className="mt-2">
             <p className="font-semibold">Selected files:</p>
@@ -314,14 +400,6 @@ export default function GltfUpdater({
           />
           <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
         </div>
-        <div className="flex items-center space-x-2">
-          <Checkbox 
-            id="exportIndividualVariants" 
-            checked={exportIndividualVariantsFlag} 
-            onCheckedChange={(checked) => setExportIndividualVariantsFlag(checked as boolean)}
-          />
-          <Label htmlFor="exportIndividualVariants">Export individual GLTF of all Variants</Label>
-        </div>
       </div>
       {materialData && materialData.models && (
         <div>
@@ -340,8 +418,43 @@ export default function GltfUpdater({
           </Select>
         </div>
       )}
-      <Button onClick={handleUpdate} disabled={!referenceFile || targetFiles.length === 0 || !materialData} className="w-full">
-        Update GLTF Files
+      <div className="flex space-x-4">
+        <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select processing mode" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="update">Update GLTF Files</SelectItem>
+            <SelectItem value="export">Export Individual Variants</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <Button onClick={handleClearFiles} variant="outline" className="w-full">
+        Clear All Files
+      </Button>
+      {currentOperation && (
+        <div className="w-full">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium">
+              {currentOperation}
+            </span>
+            <span className="text-sm font-medium">{progress.toFixed(2)}%</span>
+          </div>
+          <Progress value={progress} className="w-full" />
+          {currentFiles.length > 0 && (
+            <div className="mt-2 text-sm">
+              Processing: {currentFiles.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      <Button 
+        onClick={handleUpdate} 
+        disabled={!referenceFile || targetFiles.length === 0 || !materialData || isProcessing} 
+        className="w-full"
+      >
+        {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}
       </Button>
       <WarningDialog 
         isOpen={isWarningDialogOpen}

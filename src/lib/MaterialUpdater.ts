@@ -1,16 +1,6 @@
 // src/lib/MaterialUpdater.ts
 
-interface Material {
-  name: string;
-  tags?: string[];
-}
-
-interface MaterialData {
-  materials: Material[];
-  materialVariants: { [key: string]: string[] | { [key: string]: string[] } };
-  defaultMaterials: { [key: string]: { default: string; variantMapping?: string } };
-  models: { [key: string]: string[] };
-}
+import { Material, Variant, MaterialData } from '@/types/material';
 
 function findMaterialIndex(targetData: any, name: string): number {
   return targetData.materials.findIndex((material: any) => material.name === name);
@@ -88,6 +78,249 @@ function applyVariants(targetData: any, materialData: any) {
   console.log('Updated target data with new variants:', targetData);
 }
 
+const CHUNK_SIZE = 5; // Number of variants to process in each chunk
+const MAX_RETRIES = 3; // Maximum number of retries for file operations
+const MAX_WORKERS = navigator.hardwareConcurrency || 4; // Use available cores, default to 4
+
+async function retry<T>(operation: () => Promise<T>, maxRetries: number = MAX_RETRIES): Promise<T> {
+  let lastError: Error | null = null;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
+    }
+  }
+  throw lastError || new Error('Operation failed after multiple retries');
+}
+
+export async function processFileChunk(
+  chunkData: string,
+  fileName: string,
+  model: string,
+  applyMoodRotationFlag: boolean,
+  materialData: MaterialData
+): Promise<{ exportedVariants: Array<{ fileName: string, content: ArrayBuffer }> }> {
+  const exportedVariants: Array<{ fileName: string, content: ArrayBuffer }> = [];
+
+  if (!materialData) {
+    throw new Error("Material JSON data is missing. Please upload a valid Materials.json file.");
+  }
+
+  try {
+    const jsonData = JSON.parse(chunkData);
+    const variants = jsonData.extensions?.KHR_materials_variants?.variants || [];
+
+    for (let variantIndex = 0; variantIndex < variants.length; variantIndex++) {
+      const variant = variants[variantIndex];
+      console.log(`Processing variant: ${variant.name}`);
+
+      let variantData = JSON.parse(JSON.stringify(jsonData)); // Deep clone
+
+      // Apply variant
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions && primitive.extensions.KHR_materials_variants) {
+            const variantMapping = primitive.extensions.KHR_materials_variants.mappings.find(
+              (mapping: any) => mapping.variants.includes(variants.indexOf(variant))
+            );
+            if (variantMapping) {
+              primitive.material = variantMapping.material;
+            }
+          }
+        });
+      });
+
+      // Remove variants
+      delete variantData.extensions.KHR_materials_variants;
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions) {
+            delete primitive.extensions.KHR_materials_variants;
+          }
+        });
+      });
+
+      // Apply mood rotation if flag is set
+      if (applyMoodRotationFlag) {
+        const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
+                           materialData.models['Blavalen']?.includes(fileName) || false;
+        applyMoodRotation(variantData, isBlavalen);
+      }
+
+      // Create file name
+      const variantFileName = `${fileName.replace('.gltf', '')}_${variant.name}.gltf`;
+
+      // Convert to ArrayBuffer
+      const variantBlob = new Blob([JSON.stringify(variantData, null, 2)], { type: 'application/json' });
+      const arrayBuffer = await variantBlob.arrayBuffer();
+
+      exportedVariants.push({ fileName: variantFileName, content: arrayBuffer });
+    }
+
+    return { exportedVariants };
+  } catch (error) {
+    console.error("Error in processFileChunk:", error);
+    throw error;
+  }
+}
+
+export async function processVariantChunk(
+  chunk: any[],
+  targetData: any,
+  materialData: MaterialData,
+  applyMoodRotationFlag: boolean,
+  targetFileName: string,
+  progressCallback: (step: number) => void
+): Promise<Array<{ fileName: string, content: ArrayBuffer }>> {
+  const chunkResults: Array<{ fileName: string, content: ArrayBuffer }> = [];
+
+  for (const variant of chunk) {
+    await retry(async () => {
+      console.log(`Processing variant: ${variant.name}`);
+      let variantData = JSON.parse(JSON.stringify(targetData)); // Deep clone
+
+      // Set the variant as the default material for all meshes
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions && primitive.extensions.KHR_materials_variants) {
+            const variantMapping = primitive.extensions.KHR_materials_variants.mappings.find(
+              (mapping: any) => mapping.variants.includes(targetData.extensions.KHR_materials_variants.variants.indexOf(variant))
+            );
+            if (variantMapping) {
+              primitive.material = variantMapping.material;
+            }
+          }
+        });
+      });
+
+      // Collect used materials, textures, and images
+      const usedMaterials = new Set<number>();
+      const usedTextures = new Set<number>();
+      const usedImages = new Set<number>();
+
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.material !== undefined) {
+            usedMaterials.add(primitive.material);
+          }
+        });
+      });
+
+      // Create new arrays for materials, textures, and images
+      const newMaterials: any[] = [];
+      const newTextures: any[] = [];
+      const newImages: any[] = [];
+
+      // Process materials and update texture references
+      usedMaterials.forEach((oldMaterialIndex) => {
+        const material = variantData.materials[oldMaterialIndex];
+        const newMaterialIndex = newMaterials.length;
+
+        // Update material references in meshes
+        variantData.meshes.forEach((mesh: any) => {
+          mesh.primitives.forEach((primitive: any) => {
+            if (primitive.material === oldMaterialIndex) {
+              primitive.material = newMaterialIndex;
+            }
+          });
+        });
+
+        // Process textures in the material
+        const processTexture = (textureInfo: any) => {
+          if (textureInfo && textureInfo.index !== undefined) {
+            const oldTextureIndex = textureInfo.index;
+            const texture = variantData.textures[oldTextureIndex];
+            
+            if (!usedTextures.has(oldTextureIndex)) {
+              usedTextures.add(oldTextureIndex);
+              const newTextureIndex = newTextures.length;
+              newTextures.push(texture);
+              textureInfo.index = newTextureIndex;
+
+              // Process image
+              if (texture.source !== undefined) {
+                const oldImageIndex = texture.source;
+                if (!usedImages.has(oldImageIndex)) {
+                  usedImages.add(oldImageIndex);
+                  const newImageIndex = newImages.length;
+                  newImages.push(variantData.images[oldImageIndex]);
+                  texture.source = newImageIndex;
+                } else {
+                  texture.source = newImages.findIndex((img: any) => img === variantData.images[oldImageIndex]);
+                }
+              } 
+            } else {
+              textureInfo.index = newTextures.findIndex((tex: any) => tex === texture);
+            }
+          }
+        };
+
+        if (material.pbrMetallicRoughness) {
+          processTexture(material.pbrMetallicRoughness.baseColorTexture);
+          processTexture(material.pbrMetallicRoughness.metallicRoughnessTexture);
+        }
+        processTexture(material.normalTexture);
+        processTexture(material.occlusionTexture);
+        processTexture(material.emissiveTexture);
+
+        if (material.extensions && material.extensions.KHR_materials_sheen) {
+          processTexture(material.extensions.KHR_materials_sheen.sheenColorTexture);
+          processTexture(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
+        }
+
+        newMaterials.push(material);
+      });
+
+      // Update the variant data with new arrays
+      variantData.materials = newMaterials;
+      variantData.textures = newTextures;
+      variantData.images = newImages;
+
+      // Remove variants
+      delete variantData.extensions.KHR_materials_variants;
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions) {
+            delete primitive.extensions.KHR_materials_variants;
+          }
+        });
+      });
+
+      // Apply mood rotation if flag is set
+      if (applyMoodRotationFlag) {
+        const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
+                           materialData.models['Blavalen']?.includes(targetFileName) || false;
+        applyMoodRotation(variantData, isBlavalen);
+      }
+
+      // Create file name
+      const fileName = `${targetFileName.replace('.gltf', '')}_${variant.name}.gltf`;
+
+      // Convert to ArrayBuffer
+      const variantBlob = new Blob([JSON.stringify(variantData, null, 2)], { type: 'application/json' });
+      const arrayBuffer = await variantBlob.arrayBuffer();
+
+      chunkResults.push({ fileName, content: arrayBuffer });
+      console.log(`Exported variant file: ${fileName}`);
+      progressCallback(1);
+    });
+  }
+
+  return chunkResults;
+}
+
+export async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 export function compareMaterials(referenceData: any, materialData: any): string[] {
   const differences: string[] = [];
 
@@ -120,99 +353,86 @@ export function compareMaterials(referenceData: any, materialData: any): string[
 }
 
 export async function updateMaterials(
-  referenceFile: File,
-  targetFiles: File[],
+  referenceData: any,
+  targetData: any,
   model: string,
   applyVariantsFlag: boolean,
   applyMoodRotationFlag: boolean,
-  materialData: any
-): Promise<ArrayBuffer[]> {
+  materialData: MaterialData,
+  progressCallback: (progress: number) => void
+): Promise<ArrayBuffer> {
   console.log("Starting updateMaterials function");
-  const updatedFiles: ArrayBuffer[] = [];
 
   if (!materialData) {
     throw new Error("Material JSON data is missing. Please upload a valid Materials.json file.");
   }
 
   try {
-    const referenceContent = await referenceFile.text();
-    const referenceData = JSON.parse(referenceContent);
+    // Update extensions
+    targetData.extensions = referenceData.extensions;
+    targetData.extensionsRequired = referenceData.extensionsRequired;
+    targetData.extensionsUsed = referenceData.extensionsUsed;
 
-    for (const targetFile of targetFiles) {
-      console.log(`Processing target file: ${targetFile.name}`);
-      const targetContent = await targetFile.text();
-      let targetData = JSON.parse(targetContent);
+    progressCallback(0.2); // 20% progress
 
-      // Update extensions
-      targetData.extensions = referenceData.extensions;
-      targetData.extensionsRequired = referenceData.extensionsRequired;
-      targetData.extensionsUsed = referenceData.extensionsUsed;
+    // Check for original AO texture and image
+    const hasOriginalAOTexture = targetData.textures && targetData.textures.length > 0;
+    const hasOriginalAOImage = targetData.images && targetData.images.length > 0;
 
-      // Check for original AO texture and image
-      const hasOriginalAOTexture = targetData.textures && targetData.textures.length > 0;
-      const hasOriginalAOImage = targetData.images && targetData.images.length > 0;
+    // Preserve the original AO texture and image if they exist
+    const originalAOTexture = hasOriginalAOTexture ? targetData.textures[0] : null;
+    const originalAOImage = hasOriginalAOImage ? targetData.images[0] : null;
 
-      // Preserve the original AO texture and image if they exist
-      const originalAOTexture = hasOriginalAOTexture ? targetData.textures[0] : null;
-      const originalAOImage = hasOriginalAOImage ? targetData.images[0] : null;
+    // Update materials, textures, and images
+    targetData.materials = referenceData.materials;
+    targetData.textures = referenceData.textures;
+    targetData.images = referenceData.images;
 
-      // Update materials, textures, and images
-      targetData.materials = referenceData.materials;
-      targetData.textures = referenceData.textures;
-      targetData.images = referenceData.images;
+    progressCallback(0.4); // 40% progress
 
-      // Replace AO texture and image if they existed in the original file
-      if (hasOriginalAOTexture && originalAOTexture) {
-        targetData.textures[0] = originalAOTexture;
-      }
-      if (hasOriginalAOImage && originalAOImage) {
-        targetData.images[0] = originalAOImage;
-      }
-
-      targetData.samplers = targetData.samplers || [];
-
-      // Ensure AO texture source is set correctly if it exists
-      if (hasOriginalAOTexture && targetData.textures[0] && targetData.textures[0].source !== 0) {
-        targetData.textures[0].source = 0;
-      }
-
-      // Apply mood rotation if flag is set
-      if (applyMoodRotationFlag) {
-        const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
-                           materialData.models['Blavalen'].includes(targetFile.name);
-        applyMoodRotation(targetData, isBlavalen);
-      }
-
-      // Apply variants if flag is set
-      if (applyVariantsFlag) {
-        try {
-          applyVariants(targetData, materialData);
-        } catch (error) {
-          console.error('Error applying variants:', error);
-        }
-      }
-
-      // Filter by model if specified
-      if (model && model !== 'Regular' && materialData.models) {
-        const modelFiles = materialData.models[model];
-        if (!modelFiles || !modelFiles.some((name: string) => targetFile.name.includes(name))) {
-          console.log(`Skipping file ${targetFile.name} as it doesn't match the selected model.`);
-          continue;
-        }
-      }
-
-      const updatedBlob = new Blob([JSON.stringify(targetData, null, 2)], { type: 'application/json' });
-      const arrayBuffer = await updatedBlob.arrayBuffer();
-      updatedFiles.push(arrayBuffer);
-      console.log(`Updated file processed: ${targetFile.name}`);
+    // Replace AO texture and image if they existed in the original file
+    if (hasOriginalAOTexture && originalAOTexture) {
+      targetData.textures[0] = originalAOTexture;
     }
+    if (hasOriginalAOImage && originalAOImage) {
+      targetData.images[0] = originalAOImage;
+    }
+
+    targetData.samplers = targetData.samplers || [];
+
+    // Ensure AO texture source is set correctly if it exists
+    if (hasOriginalAOTexture && targetData.textures[0] && targetData.textures[0].source !== 0) {
+      targetData.textures[0].source = 0;
+    }
+
+    progressCallback(0.6); // 60% progress
+
+    // Apply mood rotation if flag is set
+    if (applyMoodRotationFlag) {
+      const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
+                         materialData.models['Blavalen']?.includes(targetData.name) || false;
+      applyMoodRotation(targetData, isBlavalen);
+    }
+
+    progressCallback(0.8); // 80% progress
+
+    // Apply variants if flag is set
+    if (applyVariantsFlag) {
+      try {
+        applyVariants(targetData, materialData);
+      } catch (error) {
+        console.error('Error applying variants:', error);
+      }
+    }
+
+    progressCallback(1); // 100% progress
+
+    const updatedBlob = new Blob([JSON.stringify(targetData, null, 2)], { type: 'application/json' });
+    return await updatedBlob.arrayBuffer();
   } catch (error) {
     console.error("Error in updateMaterials:", error);
     throw error;
   }
-
-  console.log(`Total updated files: ${updatedFiles.length}`);
-  return updatedFiles;
 }
 
 function applyMoodRotation(targetData: any, isBlavalen: boolean) {
@@ -239,165 +459,224 @@ function applyMoodRotation(targetData: any, isBlavalen: boolean) {
   }
 }
 
+function collectUsedAssets(data: any) {
+  const usedMaterials = new Set<number>();
+  const usedTextures = new Set<number>();
+  const usedImages = new Set<number>();
+
+  data.meshes.forEach((mesh: any) => {
+    mesh.primitives.forEach((primitive: any) => {
+      if (primitive.material !== undefined) {
+        usedMaterials.add(primitive.material);
+      }
+    });
+  });
+
+  return { usedMaterials, usedTextures, usedImages };
+}
+
+function processTexturesInMaterial(material: any, usedTextures: Set<number>, usedImages: Set<number>, newTextures: any[], newImages: any[], data: any) {
+  const processTexture = (textureInfo: any) => {
+    if (textureInfo && textureInfo.index !== undefined) {
+      const oldTextureIndex = textureInfo.index;
+      const texture = data.textures[oldTextureIndex];
+      
+      if (!usedTextures.has(oldTextureIndex)) {
+        usedTextures.add(oldTextureIndex);
+        const newTextureIndex = newTextures.length;
+        newTextures.push(texture);
+        textureInfo.index = newTextureIndex;
+
+        // Process image
+        if (texture.source !== undefined) {
+          const oldImageIndex = texture.source;
+          if (!usedImages.has(oldImageIndex)) {
+            usedImages.add(oldImageIndex);
+            const newImageIndex = newImages.length;
+            newImages.push(data.images[oldImageIndex]);
+            texture.source = newImageIndex;
+          } else {
+            texture.source = newImages.findIndex((img: any) => img === data.images[oldImageIndex]);
+          }
+        }
+      } else {
+        textureInfo.index = newTextures.findIndex((tex: any) => tex === texture);
+      }
+    }
+  };
+
+  if (material.pbrMetallicRoughness) {
+    processTexture(material.pbrMetallicRoughness.baseColorTexture);
+    processTexture(material.pbrMetallicRoughness.metallicRoughnessTexture);
+  }
+  processTexture(material.normalTexture);
+  processTexture(material.occlusionTexture);
+  processTexture(material.emissiveTexture);
+
+  if (material.extensions && material.extensions.KHR_materials_sheen) {
+    processTexture(material.extensions.KHR_materials_sheen.sheenColorTexture);
+    processTexture(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
+  }
+}
+
 export async function exportIndividualVariants(
-  referenceFile: File,
-  targetFiles: File[],
+  jsonData: any,
+  fileName: string,
   model: string,
   applyMoodRotationFlag: boolean,
-  materialData: any
-): Promise<Array<{ fileName: string, content: ArrayBuffer }>> {
-  console.log("Starting exportIndividualVariants function");
-  const exportedFiles: Array<{ fileName: string, content: ArrayBuffer }> = [];
+  materialData: MaterialData,
+  progressCallback: (progress: number) => void
+): Promise<{ exportedVariants: Array<{ fileName: string, content: ArrayBuffer }> }> {
+  console.log(`Processing file: ${fileName}`);
+  const exportedVariants: Array<{ fileName: string, content: ArrayBuffer }> = [];
 
   if (!materialData) {
     throw new Error("Material JSON data is missing. Please upload a valid Materials.json file.");
   }
 
   try {
-    for (const targetFile of targetFiles) {
-      console.log(`Processing target file: ${targetFile.name}`);
-      const targetContent = await targetFile.text();
-      const targetData = JSON.parse(targetContent);
+    const variants = jsonData.extensions?.KHR_materials_variants?.variants || [];
+    const totalVariants = variants.length;
 
-      // Get all variants
-      const variants = targetData.extensions?.KHR_materials_variants?.variants || [];
+    for (let variantIndex = 0; variantIndex < totalVariants; variantIndex++) {
+      const variant = variants[variantIndex];
+      console.log(`Processing variant: ${variant.name}`);
 
-      // For each variant, create a separate GLTF file
-      for (const variant of variants) {
-        console.log(`Processing variant: ${variant.name}`);
-        let variantData = JSON.parse(JSON.stringify(targetData)); // Deep clone
+      let variantData = JSON.parse(JSON.stringify(jsonData)); // Deep clone
 
-        // Set the variant as the default material for all meshes
+      // Apply variant
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions && primitive.extensions.KHR_materials_variants) {
+            const variantMapping = primitive.extensions.KHR_materials_variants.mappings.find(
+              (mapping: any) => mapping.variants.includes(variants.indexOf(variant))
+            );
+            if (variantMapping) {
+              primitive.material = variantMapping.material;
+            }
+          }
+        });
+      });
+
+      // Collect used materials, textures, and images
+      const usedMaterials = new Set<number>();
+      const usedTextures = new Set<number>();
+      const usedImages = new Set<number>();
+
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.material !== undefined) {
+            usedMaterials.add(primitive.material);
+          }
+        });
+      });
+
+      // Create new arrays for materials, textures, and images
+      const newMaterials: any[] = [];
+      const newTextures: any[] = [];
+      const newImages: any[] = [];
+
+      // Process materials and update texture references
+      usedMaterials.forEach((oldMaterialIndex) => {
+        const material = variantData.materials[oldMaterialIndex];
+        const newMaterialIndex = newMaterials.length;
+
+        // Update material references in meshes
         variantData.meshes.forEach((mesh: any) => {
           mesh.primitives.forEach((primitive: any) => {
-            if (primitive.extensions && primitive.extensions.KHR_materials_variants) {
-              const variantMapping = primitive.extensions.KHR_materials_variants.mappings.find(
-                (mapping: any) => mapping.variants.includes(variants.indexOf(variant))
-              );
-              if (variantMapping) {
-                primitive.material = variantMapping.material;
-              }
+            if (primitive.material === oldMaterialIndex) {
+              primitive.material = newMaterialIndex;
             }
           });
         });
 
-        // Collect used materials, textures, and images
-        const usedMaterials = new Set<number>();
-        const usedTextures = new Set<number>();
-        const usedImages = new Set<number>();
+        // Process textures in the material
+        const processTexture = (textureInfo: any) => {
+          if (textureInfo && textureInfo.index !== undefined) {
+            const oldTextureIndex = textureInfo.index;
+            const texture = variantData.textures[oldTextureIndex];
+            
+            if (!usedTextures.has(oldTextureIndex)) {
+              usedTextures.add(oldTextureIndex);
+              const newTextureIndex = newTextures.length;
+              newTextures.push(texture);
+              textureInfo.index = newTextureIndex;
 
-        variantData.meshes.forEach((mesh: any) => {
-          mesh.primitives.forEach((primitive: any) => {
-            if (primitive.material !== undefined) {
-              usedMaterials.add(primitive.material);
-            }
-          });
-        });
-
-        // Create new arrays for materials, textures, and images
-        const newMaterials: any[] = [];
-        const newTextures: any[] = [];
-        const newImages: any[] = [];
-
-        // Process materials and update texture references
-        usedMaterials.forEach((oldMaterialIndex) => {
-          const material = variantData.materials[oldMaterialIndex];
-          const newMaterialIndex = newMaterials.length;
-
-          // Update material references in meshes
-          variantData.meshes.forEach((mesh: any) => {
-            mesh.primitives.forEach((primitive: any) => {
-              if (primitive.material === oldMaterialIndex) {
-                primitive.material = newMaterialIndex;
-              }
-            });
-          });
-
-          // Process textures in the material
-          const processTexture = (textureInfo: any) => {
-            if (textureInfo && textureInfo.index !== undefined) {
-              const oldTextureIndex = textureInfo.index;
-              const texture = variantData.textures[oldTextureIndex];
-              
-              if (!usedTextures.has(oldTextureIndex)) {
-                usedTextures.add(oldTextureIndex);
-                const newTextureIndex = newTextures.length;
-                newTextures.push(texture);
-                textureInfo.index = newTextureIndex;
-
-                // Process image
-                if (texture.source !== undefined) {
-                  const oldImageIndex = texture.source;
-                  if (!usedImages.has(oldImageIndex)) {
-                    usedImages.add(oldImageIndex);
-                    const newImageIndex = newImages.length;
-                    newImages.push(variantData.images[oldImageIndex]);
-                    texture.source = newImageIndex;
-                  } else {
-                    texture.source = newImages.findIndex((img: any) => img === variantData.images[oldImageIndex]);
-                  }
+              // Process image
+              if (texture.source !== undefined) {
+                const oldImageIndex = texture.source;
+                if (!usedImages.has(oldImageIndex)) {
+                  usedImages.add(oldImageIndex);
+                  const newImageIndex = newImages.length;
+                  newImages.push(variantData.images[oldImageIndex]);
+                  texture.source = newImageIndex;
+                } else {
+                  texture.source = newImages.findIndex((img: any) => img === variantData.images[oldImageIndex]);
                 }
-              } else {
-                textureInfo.index = newTextures.findIndex((tex: any) => tex === texture);
               }
+            } else {
+              textureInfo.index = newTextures.findIndex((tex: any) => tex === texture);
             }
-          };
-
-          if (material.pbrMetallicRoughness) {
-            processTexture(material.pbrMetallicRoughness.baseColorTexture);
-            processTexture(material.pbrMetallicRoughness.metallicRoughnessTexture);
           }
-          processTexture(material.normalTexture);
-          processTexture(material.occlusionTexture);
-          processTexture(material.emissiveTexture);
+        };
 
-          // Process sheen texture
-          if (material.extensions && material.extensions.KHR_materials_sheen) {
-            processTexture(material.extensions.KHR_materials_sheen.sheenColorTexture);
-            processTexture(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
-          }
+        if (material.pbrMetallicRoughness) {
+          processTexture(material.pbrMetallicRoughness.baseColorTexture);
+          processTexture(material.pbrMetallicRoughness.metallicRoughnessTexture);
+        }
+        processTexture(material.normalTexture);
+        processTexture(material.occlusionTexture);
+        processTexture(material.emissiveTexture);
 
-          newMaterials.push(material);
-        });
-
-        // Update the variant data with new arrays
-        variantData.materials = newMaterials;
-        variantData.textures = newTextures;
-        variantData.images = newImages;
-
-        // Remove variants
-        delete variantData.extensions.KHR_materials_variants;
-        variantData.meshes.forEach((mesh: any) => {
-          mesh.primitives.forEach((primitive: any) => {
-            if (primitive.extensions) {
-              delete primitive.extensions.KHR_materials_variants;
-            }
-          });
-        });
-
-        // Apply mood rotation if flag is set
-        if (applyMoodRotationFlag) {
-          const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
-                             materialData.models['Blavalen'].includes(targetFile.name);
-          applyMoodRotation(variantData, isBlavalen);
+        if (material.extensions && material.extensions.KHR_materials_sheen) {
+          processTexture(material.extensions.KHR_materials_sheen.sheenColorTexture);
+          processTexture(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
         }
 
-        // Create file name
-        const fileName = `${targetFile.name.replace('.gltf', '')}${variant.name}.gltf`;
+        newMaterials.push(material);
+      });
 
-        // Convert to ArrayBuffer
-        const variantBlob = new Blob([JSON.stringify(variantData, null, 2)], { type: 'application/json' });
-        const arrayBuffer = await variantBlob.arrayBuffer();
+      // Update the variant data with new arrays
+      variantData.materials = newMaterials;
+      variantData.textures = newTextures;
+      variantData.images = newImages;
 
-        exportedFiles.push({ fileName, content: arrayBuffer });
-        console.log(`Exported variant file: ${fileName}`);
+      // Remove variants
+      delete variantData.extensions.KHR_materials_variants;
+      variantData.meshes.forEach((mesh: any) => {
+        mesh.primitives.forEach((primitive: any) => {
+          if (primitive.extensions) {
+            delete primitive.extensions.KHR_materials_variants;
+          }
+        });
+      });
+
+      // Apply mood rotation if flag is set
+      if (applyMoodRotationFlag) {
+        const isBlavalen = materialData.models && materialData.models['Blavalen'] && 
+                           materialData.models['Blavalen']?.includes(fileName) || false;
+        applyMoodRotation(variantData, isBlavalen);
       }
+
+      // Create file name
+      const variantFileName = `${fileName.replace('.gltf', '')}_${variant.name}.gltf`;
+
+      // Convert to ArrayBuffer
+      const variantBlob = new Blob([JSON.stringify(variantData, null, 2)], { type: 'application/json' });
+      const arrayBuffer = await variantBlob.arrayBuffer();
+
+      exportedVariants.push({ fileName: variantFileName, content: arrayBuffer });
+
+      // Report progress
+      progressCallback((variantIndex + 1) / totalVariants);
+
+      // Clear variantData to free up memory
+      variantData = null;
     }
+
+    return { exportedVariants };
   } catch (error) {
     console.error("Error in exportIndividualVariants:", error);
     throw error;
   }
-
-  console.log(`Total exported variant files: ${exportedFiles.length}`);
-  return exportedFiles;
 }
