@@ -5,7 +5,8 @@ const nextConfig = {
     webpack5: true,
     webpack: (config) => {
       config.resolve.fallback = { fs: false };
-  
+      config.output.webassemblyModuleFilename = 'static/wasm/[modulehash].wasm'
+      config.experiments = { ...config.experiments, asyncWebAssembly: true }
       return config;
     },
 };

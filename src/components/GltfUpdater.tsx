@@ -18,8 +18,6 @@ declare global {
   }
 }
 
-const CHUNK_SIZE = 5;
-
 interface GltfUpdaterProps {
   materialData: MaterialData;
   referenceFile: File | null;
@@ -65,6 +63,11 @@ export default function GltfUpdater({
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [outputDirectory, setOutputDirectory] = useState<FileSystemDirectoryHandle | null>(null);
+  const [outputDirectoryName, setOutputDirectoryName] = useState<string | null>(null);
+  const [concurrentProcesses, setConcurrentProcesses] = useState(1);
+  const [currentlyProcessingFiles, setCurrentlyProcessingFiles] = useState<string[]>([]);
+  const [latestProcessedFile, setLatestProcessedFile] = useState<string | null>(null);
 
   const referenceFileInputRef = useRef<HTMLInputElement>(null);
   const targetFilesInputRef = useRef<HTMLInputElement>(null);
@@ -108,75 +111,41 @@ export default function GltfUpdater({
     if (targetFilesInputRef.current) targetFilesInputRef.current.value = '';
   };
 
+  const handleOutputDirectorySelect = async () => {
+    try {
+      const handle = await window.showDirectoryPicker();
+      setOutputDirectory(handle);
+      setOutputDirectoryName(handle.name);
+      setFeedback('Output directory selected successfully.');
+    } catch (error) {
+      console.error('Error selecting output directory:', error);
+      setErrorMessage('Failed to select output directory. Please try again.');
+      setIsErrorDialogOpen(true);
+    }
+  };
+
   const saveFile = async (fileName: string, content: ArrayBuffer) => {
     if (!directoryHandleRef.current) {
       throw new Error("Directory not selected");
     }
-    const fileHandle = await directoryHandleRef.current.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(content);
-    await writable.close();
-  };
-
-  const processChunk = async (
-    chunk: File[],
-    referenceData: GltfData,
-    chunkIndex: number,
-    totalChunks: number,
-    totalFiles: number
-  ) => {
-    for (let i = 0; i < chunk.length; i++) {
-      const file = chunk[i];
-      const fileIndex = chunkIndex * CHUNK_SIZE + i;
-      setCurrentOperation(`Processing ${file.name} (${fileIndex + 1}/${totalFiles})`);
-      
-      try {
-        const content = await file.text();
-        const jsonData = JSON.parse(content) as GltfData;
-        
-        if (processingMode === 'update') {
-          const result = await updateMaterials(
-            referenceData,
-            jsonData,
-            selectedModel,
-            applyVariants,
-            applyMoodRotation,
-            materialData,
-            (fileProgress) => {
-              const overallProgress = (fileIndex + fileProgress) / totalFiles * 100;
-              setProgress(overallProgress);
-            }
-          );
-          
-          await saveFile(file.name, result);
-        } else if (processingMode === 'export') {
-          const { exportedVariants } = await exportIndividualVariants(
-            jsonData,
-            file.name,
-            selectedModel,
-            applyMoodRotation,
-            materialData,
-            (fileProgress) => {
-              const overallProgress = (fileIndex + fileProgress) / totalFiles * 100;
-              setProgress(overallProgress);
-            }
-          );
-          
-          for (const variant of exportedVariants) {
-            await saveFile(variant.fileName, variant.content);
-          }
-        }
-      } catch (error) {
-        console.error(`Error processing ${file.name}:`, error);
-        setErrorMessage(`Error processing ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    try {
+      const fileHandle = await directoryHandleRef.current.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        setErrorMessage('Permission to write files was denied. Please try again and grant permission when prompted.');
         setIsErrorDialogOpen(true);
+        throw error;
       }
+      throw error;
     }
   };
 
-  const handleUpdate = async () => {
-    if (!referenceFile || targetFiles.length === 0 || !materialData) {
-      setErrorMessage('Please select reference and target files, and ensure material data is loaded.');
+  const processFiles = useCallback(async () => {
+    if (!referenceFile || targetFiles.length === 0 || !materialData || !outputDirectory) {
+      setErrorMessage('Please select reference file, target files, ensure material data is loaded, and select an output directory.');
       setIsErrorDialogOpen(true);
       return;
     }
@@ -185,27 +154,78 @@ export default function GltfUpdater({
       const referenceContent = await referenceFile.text();
       const referenceData = JSON.parse(referenceContent) as GltfData;
 
-      const handle = await window.showDirectoryPicker();
-      directoryHandleRef.current = handle;
-
       setFeedback('Processing files...');
       setProgress(0);
-      setCurrentOperation('Preparing to process files');
       setIsProcessing(true);
+      setLatestProcessedFile(null);
+
+      directoryHandleRef.current = outputDirectory;
+
+      const workerPool = new Array(concurrentProcesses).fill(null).map(() => 
+        new Worker(new URL('../workers/gltfWorker.ts', import.meta.url))
+      );
+
+      let completedFiles = 0;
+      const totalFiles = targetFiles.length;
+
+      const processFile = async (file: File, workerIndex: number) => {
+        setCurrentlyProcessingFiles(prev => [...prev, file.name]);
+        const worker = workerPool[workerIndex];
+        const content = await file.text();
+        const jsonData = JSON.parse(content) as GltfData;
+
+        return new Promise((resolve, reject) => {
+          worker.onmessage = async (e: MessageEvent) => {
+            if (e.data.type === 'progress') {
+              const fileProgress = e.data.progress;
+              const overallProgress = (completedFiles + fileProgress) / totalFiles * 100;
+              setProgress(overallProgress);
+            } else if (e.data.type === 'complete') {
+              completedFiles++;
+              if (processingMode === 'update') {
+                await saveFile(file.name, e.data.result);
+                setLatestProcessedFile(file.name);
+              } else if (processingMode === 'export') {
+                for (const variant of e.data.result.exportedVariants) {
+                  await saveFile(variant.fileName, variant.content);
+                  setLatestProcessedFile(variant.fileName);
+                }
+              }
+              setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
+              resolve(null);
+            } else if (e.data.type === 'error') {
+              setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
+              reject(new Error(e.data.error));
+            }
+          };
+
+          worker.postMessage({
+            referenceData,
+            targetData: jsonData,
+            model: selectedModel,
+            applyVariants,
+            applyMoodRotation,
+            materialData,
+            processingMode,
+            fileName: file.name
+          }, []);
+        });
+      };
 
       const chunks = [];
-      for (let i = 0; i < targetFiles.length; i += CHUNK_SIZE) {
-        chunks.push(targetFiles.slice(i, i + CHUNK_SIZE));
+      for (let i = 0; i < targetFiles.length; i += concurrentProcesses) {
+        chunks.push(targetFiles.slice(i, i + concurrentProcesses));
       }
       setTotalChunks(chunks.length);
 
       for (let i = 0; i < chunks.length; i++) {
         setCurrentChunk(i + 1);
-        await processChunk(chunks[i], referenceData, i, chunks.length, targetFiles.length);
+        await Promise.all(chunks[i].map((file, index) => processFile(file, index)));
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      setCurrentOperation('Processing complete');
+      workerPool.forEach(worker => worker.terminate());
+
       setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and saved to selected directory.`);
     } catch (error) {
       console.error('Error processing materials:', error);
@@ -213,11 +233,12 @@ export default function GltfUpdater({
       setIsErrorDialogOpen(true);
     } finally {
       setProgress(100);
-      setCurrentOperation(null);
       setIsProcessing(false);
+      setCurrentlyProcessingFiles([]);
+      setLatestProcessedFile(null);
       directoryHandleRef.current = null;
     }
-  };
+  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, saveFile, outputDirectory, concurrentProcesses]);
 
   const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
@@ -348,15 +369,56 @@ export default function GltfUpdater({
       </Button>
 
       <ProgressDisplay
-        currentOperation={currentOperation}
         progress={progress}
         currentChunk={currentChunk}
         totalChunks={totalChunks}
+        currentlyProcessingFiles={currentlyProcessingFiles}
+        latestProcessedFile={latestProcessedFile}
+        isProcessing={isProcessing}
       />
 
+      {targetFiles.length > 1 && (
+        <div>
+          <div>
+            <Label htmlFor="outputDirectory">Output Directory:</Label>
+            <div className="flex items-center space-x-2">
+              <Input 
+                id="outputDirectory" 
+                type="text" 
+                readOnly 
+                value={outputDirectoryName || ''} 
+                placeholder="Select output directory"
+                className="mt-1 flex-grow" 
+              />
+              <Button 
+                onClick={handleOutputDirectorySelect}
+                variant="outline"
+              >
+                Select Directory
+              </Button>
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="concurrentProcesses">Concurrent Processes:</Label>
+            <Select value={concurrentProcesses.toString()} onValueChange={(value) => setConcurrentProcesses(Number(value))}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select number of concurrent processes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1</SelectItem>
+                <SelectItem value="2">2</SelectItem>
+                <SelectItem value="3">3</SelectItem>
+                <SelectItem value="5">5</SelectItem>
+                <SelectItem value="8">8</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
       <Button 
-        onClick={handleUpdate} 
-        disabled={(!referenceFile && !isReferenceFileStored) || targetFiles.length === 0 || !materialData || isProcessing} 
+        onClick={processFiles} 
+        disabled={(!referenceFile && !isReferenceFileStored) || targetFiles.length === 0 || !materialData || isProcessing || (targetFiles.length > 1 && !outputDirectory)} 
         className="w-full"
       >
         {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}

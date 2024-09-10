@@ -4,32 +4,43 @@ import React from 'react';
 import { Progress } from "@/components/ui/progress";
 
 interface ProgressDisplayProps {
-  currentOperation: string | null;
   progress: number;
   currentChunk: number;
   totalChunks: number;
+  currentlyProcessingFiles: string[];
+  latestProcessedFile: string | null;
+  isProcessing: boolean;
 }
 
 const ProgressDisplay: React.FC<ProgressDisplayProps> = ({
-  currentOperation,
   progress,
   currentChunk,
-  totalChunks
+  totalChunks,
+  currentlyProcessingFiles,
+  latestProcessedFile,
+  isProcessing
 }) => {
-  if (!currentOperation) return null;
+  if (!isProcessing) return null;
 
   return (
-    <div className="w-full">
-      <div className="flex justify-between items-center mb-2">
+    <div className="w-full space-y-2">
+      <div className="flex justify-between items-center">
         <span className="text-sm font-medium">
-          {currentOperation}
+          {currentlyProcessingFiles.length > 0
+            ? `Processing: ${currentlyProcessingFiles.join(', ')}`
+            : 'Preparing to process files...'}
         </span>
         <span className="text-sm font-medium">{progress.toFixed(2)}%</span>
       </div>
       <Progress value={progress} className="w-full" />
       {currentChunk > 0 && (
-        <div className="mt-2 text-sm">
+        <div className="text-sm">
           Processing chunk {currentChunk} of {totalChunks}
+        </div>
+      )}
+      {latestProcessedFile && (
+        <div className="text-sm text-green-600">
+          Latest processed file: {latestProcessedFile}
         </div>
       )}
     </div>
