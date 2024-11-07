@@ -38,22 +38,6 @@ export default function MaterialSortDialog({
   const [searchTerm, setSearchTerm] = useState('');
   const [previewMaterials, setPreviewMaterials] = useState<Material[]>([]);
   
-  // Initialize tag states
-  useEffect(() => {
-    if (isOpen) {
-      const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
-      const initialTagStates = uniqueTags
-        .sort()
-        .map(tag => ({ name: tag, enabled: true }));
-      
-      // Add "Untagged" as the last tag
-      initialTagStates.push({ name: 'Untagged', enabled: true });
-      
-      setTagStates(initialTagStates);
-      updateMaterialOrder(initialTagStates);
-    }
-  }, [isOpen, materials]);
-
   const updateMaterialOrder = (currentTagStates: TagState[]) => {
     const enabledTags = currentTagStates
       .filter(tag => tag.enabled)
@@ -89,6 +73,7 @@ export default function MaterialSortDialog({
       });
     });
 
+
     // Add remaining materials alphabetically
     const remainingMaterials = materials
       .filter(m => !processedMaterials.has(m.name))
@@ -97,6 +82,22 @@ export default function MaterialSortDialog({
     sortedMaterials.push(...remainingMaterials);
     setPreviewMaterials(sortedMaterials);
   };
+  
+      // Initialize tag states
+      useEffect(() => {
+        if (isOpen) {
+          const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
+          const initialTagStates = uniqueTags
+            .sort()
+            .map(tag => ({ name: tag, enabled: true }));
+          
+          // Add "Untagged" as the last tag
+          initialTagStates.push({ name: 'Untagged', enabled: true });
+          
+          setTagStates(initialTagStates);
+          updateMaterialOrder(initialTagStates);
+        }
+      }, [isOpen, materials, updateMaterialOrder]);
 
   const handleDragEnd = (result: any) => {
     if (!result.destination) return;

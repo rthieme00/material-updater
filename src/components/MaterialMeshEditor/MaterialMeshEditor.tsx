@@ -48,6 +48,12 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     newTags: string[];
   }>>([]);
 
+  const updateAllTags = useCallback((materials: Material[]) => {
+    const tags = new Set<string>();
+    materials.forEach(material => material.tags.forEach(tag => tags.add(tag)));
+    setAllTags(Array.from(tags));
+  }, []);
+  
   useEffect(() => {
     try {
       setMaterials(data.materials || []);
@@ -56,13 +62,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     } catch (error) {
       console.error('Error setting initial state:', error);
     }
-  }, [data]);
-
-  const updateAllTags = useCallback((materials: Material[]) => {
-    const tags = new Set<string>();
-    materials.forEach(material => material.tags.forEach(tag => tags.add(tag)));
-    setAllTags(Array.from(tags));
-  }, []);
+  }, [data, updateAllTags]);
 
   // Add safety check at the start of handlers
   const safeUpdate = useCallback((updatedData: MaterialData) => {

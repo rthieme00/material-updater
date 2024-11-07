@@ -275,7 +275,9 @@ export default function GltfUpdater({
             processingMode,
             fileName: file.name,
             refFileName: referenceFileName,
-            targetFileName: file.name
+            targetFileName: file.name,
+            referenceFileName,  // Added
+            setFeedback  
           });
         });
       };
@@ -306,7 +308,7 @@ export default function GltfUpdater({
       setLatestProcessedFile(null);
       directoryHandleRef.current = null;
     }
-  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses]);
+  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses, referenceFileName]);
 
   const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
