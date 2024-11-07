@@ -4,30 +4,30 @@ import React from 'react';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { Button } from "@/components/ui/button";
 import MaterialItem from './MaterialItem';
-import { Plus, ArrowUpDown } from 'lucide-react';
-import { Material } from '@/gltf/gltfTypes';
+import { Plus } from 'lucide-react';
 import { Card } from "@/components/ui/card";
+import { Material } from '@/gltf/gltfTypes'; // Added this import
 
 interface MaterialsSectionProps {
   materials: Material[];
   onDragEnd: (result: any) => void;
   onAddMaterials: () => void;
-  onSortMaterials: () => void;
   onEditTags: (name: string) => void;
   onRenameMaterial: (name: string) => void;
   onRemoveMaterial: (name: string) => void;
   onMoveMaterial: (fromIndex: number, toIndex: number) => void;
+  onRemoveTag: (materialName: string, tag: string) => void;
 }
 
 const MaterialsSection: React.FC<MaterialsSectionProps> = ({
   materials,
   onDragEnd,
   onAddMaterials,
-  onSortMaterials,
   onEditTags,
   onRenameMaterial,
   onRemoveMaterial,
-  onMoveMaterial
+  onMoveMaterial,
+  onRemoveTag
 }) => {
   const handleMoveMaterial = (index: number, direction: 'up' | 'down') => {
     const newIndex = direction === 'up' ? index - 1 : index + 1;
@@ -58,6 +58,7 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
                         onRenameMaterial={onRenameMaterial}
                         onRemoveMaterial={onRemoveMaterial}
                         onMoveMaterial={handleMoveMaterial}
+                        onRemoveTag={onRemoveTag}  // Add this line
                         provided={provided}
                       />
                     )}
@@ -69,24 +70,14 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
           </Droppable>
         </DragDropContext>
 
-        <div className="flex gap-4">
-          <Button 
-            onClick={onAddMaterials}
-            variant="outline"
-            className="flex-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add Materials
-          </Button>
-          <Button
-            onClick={onSortMaterials}
-            variant="outline"
-            className="flex-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900"
-          >
-            <ArrowUpDown className="w-4 h-4 mr-2" />
-            Sort Materials
-          </Button>
-        </div>
+        <Button 
+          onClick={onAddMaterials}
+          variant="outline"
+          className="w-full bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Add Materials
+        </Button>
       </div>
     </Card>
   );

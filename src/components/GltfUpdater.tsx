@@ -132,6 +132,13 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
     
     const newErrors: {[key: string]: string} = {};
     const validFiles = files.filter(file => {
+      // Check for duplicates first
+      if (targetFiles.some(existingFile => existingFile.name === file.name)) {
+        newErrors[file.name] = 'File already added';
+        return false;
+      }
+  
+      // Then check other validations
       const errors = validateFile(file);
       if (Object.keys(errors).length > 0) {
         Object.assign(newErrors, errors);
@@ -365,6 +372,7 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
           accept=".gltf,.glb"
           label="Drop target GLTF files here"
           multiple={true}
+          hasFiles={targetFiles.length > 0}
         />
 
         <FileList
@@ -379,6 +387,8 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
           }}
           errors={fileErrors}
           className="max-h-[300px]"
+          onFileSelect={handleTargetFilesSelect}
+          accept=".gltf,.glb"
         />
 
         {targetFiles.length > 0 && (

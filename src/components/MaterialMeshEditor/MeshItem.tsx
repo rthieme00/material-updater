@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import SearchableSelect from '@/components/ui/searchable-select';
+import TagSelectionModal from '../Dialogs/TagSelectionModal';
 
 interface MeshItemProps {
   meshName: string;
@@ -23,11 +24,17 @@ interface MeshItemProps {
   onToggle: (meshName: string) => void;
   onRename: (meshName: string) => void;
   onRemove: (meshName: string) => void;
-  onAutoAssign: (meshName: string) => void;
+  onAutoAssign: (meshName: string, tag: string) => void; // Updated signature
   onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
   onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
   onAddVariant: (meshName: string) => void;
+  provided: any;
+  index: number;
+  totalItems: number;
+  onMove: (index: number, direction: 'up' | 'down') => void;
+  canMove: (index: number, direction: 'up' | 'down') => boolean;
+  availableTags: string[]; // Add this new prop
 }
 
 const MeshItem: React.FC<MeshItemProps> = ({
@@ -42,16 +49,40 @@ const MeshItem: React.FC<MeshItemProps> = ({
   onAssignmentChange,
   onVariantChange,
   onRemoveVariant,
-  onAddVariant
+  onAddVariant,
+  provided,
+  index,
+  totalItems,
+  onMove,
+  canMove,
+  availableTags
 }) => {
   const [expandedVariants, setExpandedVariants] = useState<boolean>(false);
+  const [isTagSelectionOpen, setIsTagSelectionOpen] = useState(false);
+
+  // Update the auto-assign button click handler
+  const handleAutoAssignClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsTagSelectionOpen(true);
+  };
 
   return (
-    <Card className={cn(
-      "transition-all duration-200",
-      expanded ? "shadow-md" : "shadow-sm hover:shadow-md",
-      "border-gray-200 dark:border-gray-700"
-    )}>
+    <Card 
+      ref={provided.innerRef}
+      {...provided.draggableProps}
+      {...provided.dragHandleProps}
+      className={cn(
+        "group transition-all duration-200",
+        expanded ? "shadow-md" : "shadow-sm hover:shadow-md",
+        "border-gray-200 dark:border-gray-700",
+        "cursor-grab active:cursor-grabbing",
+        // Add hover indicator on the left side
+        "before:absolute before:inset-y-0 before:left-0 before:w-1",
+        "before:bg-gray-200 dark:before:bg-gray-700",
+        "before:group-hover:bg-blue-500 before:transition-colors",
+        "relative"
+      )}
+    >
       <CardHeader className="py-3 px-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -75,6 +106,45 @@ const MeshItem: React.FC<MeshItemProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Move Up/Down Buttons */}
+            <div className="flex flex-col mr-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => onMove(index, 'up')}
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1"
+                    disabled={!canMove(index, 'up')}
+                  >
+                    <ChevronUp size={16} className={cn(
+                      "transition-colors",
+                      !canMove(index, 'up') ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
+                    )} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Move Up</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => onMove(index, 'down')}
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1"
+                    disabled={!canMove(index, 'down')}
+                  >
+                    <ChevronDown size={16} className={cn(
+                      "transition-colors",
+                      !canMove(index, 'down') ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
+                    )} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Move Down</TooltipContent>
+              </Tooltip>
+            </div>
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button 
@@ -90,18 +160,18 @@ const MeshItem: React.FC<MeshItemProps> = ({
             </Tooltip>
 
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button 
-                  onClick={() => onAutoAssign(meshName)} 
-                  variant="outline"
-                  size="sm"
-                  className="hover:bg-blue-50 dark:hover:bg-blue-900"
-                >
-                  <Zap className="h-4 w-4 text-blue-500" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Auto-assign by tag</TooltipContent>
-            </Tooltip>
+          <TooltipTrigger asChild>
+            <Button 
+              onClick={handleAutoAssignClick} 
+              variant="outline"
+              size="sm"
+              className="hover:bg-blue-50 dark:hover:bg-blue-900"
+            >
+              <Zap className="h-4 w-4 text-blue-500" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Auto-assign by tag</TooltipContent>
+        </Tooltip>
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -219,6 +289,13 @@ const MeshItem: React.FC<MeshItemProps> = ({
           </div>
         </CardContent>
       )}
+
+      <TagSelectionModal
+        isOpen={isTagSelectionOpen}
+        onClose={() => setIsTagSelectionOpen(false)}
+        onSelectTag={(tag) => onAutoAssign(meshName, tag)}
+        tags={availableTags}
+      />
     </Card>
   );
 };

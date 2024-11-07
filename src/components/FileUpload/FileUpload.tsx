@@ -5,6 +5,7 @@ import { useDropzone } from 'react-dropzone';
 import { Button } from "@/components/ui/button";
 import { Upload, File, CheckCircle2, X, AlertCircle } from 'lucide-react';
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion"; // Add framer-motion import
 
 interface FileUploadProps {
   onFileSelect: (files: File | File[]) => void;
@@ -16,6 +17,7 @@ interface FileUploadProps {
   onClearFile?: () => void;
   variant?: 'default' | 'compact';
   hasFiles?: boolean;
+  className?: string;
 }
 
 export default function FileUpload({ 
@@ -27,8 +29,25 @@ export default function FileUpload({
   error,
   onClearFile,
   variant = 'default',
-  hasFiles = false
+  hasFiles = false,
+  className
 }: FileUploadProps) {
+  const getAcceptMapping = (acceptString: string) => {
+    const mapping: { [key: string]: string[] } = {
+      '.gltf': ['model/gltf+json', 'application/json'],
+      '.glb': ['model/gltf-binary'],
+      '.json': ['application/json']
+    };
+
+    return acceptString.split(',').reduce((acc: { [key: string]: string[] }, type) => {
+      const trimmedType = type.trim();
+      if (mapping[trimmedType]) {
+        acc[trimmedType] = mapping[trimmedType];
+      }
+      return acc;
+    }, {});
+  };
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       if (multiple) {
@@ -40,15 +59,18 @@ export default function FileUpload({
   }, [onFileSelect, multiple]);
 
   const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({ 
-    onDrop, 
-    accept: accept.split(',').reduce((acc, type) => ({
-      ...acc,
-      [type]: []
-    }), {}),
-    multiple 
+    onDrop,
+    accept: getAcceptMapping(accept),
+    noClick: false,
+    multiple,
   });
 
-  const renderContent = () => {
+  // If we have files and it's a multiple file upload, don't render the drop zone
+  if (hasFiles && multiple) {
+    return <input {...getInputProps()} className="hidden" />;
+  }
+
+  const renderNormalContent = () => {
     if (selectedFileName) {
       return (
         <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
@@ -75,28 +97,6 @@ export default function FileUpload({
             </Button>
           )}
           <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
-        </div>
-      );
-    }
-
-    if (isDragActive) {
-      return (
-        <div className="flex flex-col items-center gap-2">
-          <div className={cn(
-            "p-4 rounded-full",
-            isDragReject ? "bg-red-50" : "bg-blue-50"
-          )}>
-            <Upload className={cn(
-              "h-10 w-10",
-              isDragReject ? "text-red-500" : "text-blue-500"
-            )} />
-          </div>
-          <p className="text-sm font-medium">
-            {isDragReject 
-              ? "This file type is not supported" 
-              : "Drop your file here"
-            }
-          </p>
         </div>
       );
     }
@@ -129,29 +129,86 @@ export default function FileUpload({
   };
 
   return (
-    <div 
-      {...getRootProps()}
-      className={cn(
-        "relative rounded-lg transition-all duration-150",
-        "border-2 border-dashed",
-        hasFiles ? "py-2 px-4" : "p-6",
-        isDragActive && !isDragReject && "border-blue-500 bg-blue-50 dark:bg-blue-900/20",
-        isDragReject && "border-red-500 bg-red-50 dark:bg-red-900/20",
-        selectedFileName && "border-green-500",
-        !isDragActive && !selectedFileName && "border-gray-300 dark:border-gray-700",
-        "hover:border-gray-400 dark:hover:border-gray-600",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
-        error && "border-red-500"
-      )}
-    >
-      <input {...getInputProps()} />
-      {renderContent()}
-      {error && (
-        <div className="flex items-center gap-2 text-red-600 text-sm mt-2 px-4 pb-4">
-          <AlertCircle className="h-4 w-4" />
-          <span>{error}</span>
+    <div className="relative">
+      <div 
+        {...getRootProps()}
+        className={cn(
+          "relative rounded-lg transition-all duration-150",
+          "border-2 border-dashed",
+          hasFiles ? "py-2 px-4" : "p-6",
+          isDragActive && !isDragReject && "border-blue-500",
+          isDragReject && "border-red-500",
+          selectedFileName && "border-green-500",
+          !isDragActive && !selectedFileName && "border-gray-300 dark:border-gray-700",
+          "hover:border-gray-400 dark:hover:border-gray-600",
+          error && "border-red-500",
+          className
+        )}
+      >
+        <input {...getInputProps()} />
+        
+        {/* Normal content with conditional opacity */}
+        <div className={cn(
+          "transition-opacity duration-200",
+          isDragActive && "opacity-30"
+        )}>
+          {renderNormalContent()}
+          {error && (
+            <div className="flex items-center gap-2 text-red-600 text-sm mt-2 px-4 pb-4">
+              <AlertCircle className="h-4 w-4" />
+              <span>{error}</span>
+            </div>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* Drag overlay with AnimatePresence */}
+      <AnimatePresence>
+        {isDragActive && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className={cn(
+              "absolute inset-0 z-50",
+              "flex items-center justify-center",
+              "rounded-lg",
+              "bg-white dark:bg-gray-800",
+              "bg-opacity-90 dark:bg-opacity-90",
+              "pointer-events-none",
+              isDragReject ? "border-2 border-dashed border-red-500" : "border-2 border-dashed border-blue-500"
+            )}
+          >
+            <div className="flex flex-col items-center gap-4">
+              <motion.div
+                animate={{ y: [0, -8, 0] }}
+                transition={{ 
+                  duration: 1.5,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+              >
+                <Upload 
+                  className={cn(
+                    "h-12 w-12",
+                    isDragReject ? "text-red-500" : "text-blue-500"
+                  )} 
+                />
+              </motion.div>
+              <p className={cn(
+                "text-lg font-medium",
+                isDragReject ? "text-red-700 dark:text-red-300" : "text-blue-700 dark:text-blue-300"
+              )}>
+                {isDragReject 
+                  ? "This file type is not supported" 
+                  : "Drop files here to add"
+                }
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

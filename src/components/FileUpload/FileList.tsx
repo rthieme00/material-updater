@@ -1,7 +1,8 @@
 // src/components/FileUpload/FileList.tsx
 
 import React from 'react';
-import { File, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useDropzone } from 'react-dropzone';
+import { File, X, AlertCircle, CheckCircle2, Upload } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
@@ -22,6 +23,8 @@ interface FileListProps {
   className?: string;
   processing?: boolean;
   processedFiles?: string[];
+  onFileSelect?: (files: File[]) => void;
+  accept?: string;
 }
 
 export default function FileList({ 
@@ -30,19 +33,44 @@ export default function FileList({
   errors = {},
   className,
   processing = false,
-  processedFiles = []
+  processedFiles = [],
+  onFileSelect,
+  accept
 }: FileListProps) {
+  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
+    onDrop: onFileSelect ? (acceptedFiles) => onFileSelect(acceptedFiles) : undefined,
+    accept: {
+      'application/json': ['.gltf'],
+      'model/gltf-binary': ['.glb'],
+      'model/gltf+json': ['.gltf']
+    },
+    noClick: true,
+    multiple: true,
+  });
+
   if (files.length === 0) return null;
 
   return (
-    <div className={cn(
-      "border rounded-lg overflow-hidden",
-      "bg-white dark:bg-gray-800",
-      "shadow-sm",
-      className
-    )}>
-      <ScrollArea className="h-[300px]">
-        <Table>
+    <div 
+      {...getRootProps()}
+      className={cn(
+        "relative border rounded-lg",
+        "bg-white dark:bg-gray-800",
+        "shadow-sm overflow-hidden",
+        isDragActive && !isDragReject && "border-blue-500",
+        isDragReject && "border-red-500",
+        className
+      )}
+    >
+      <input {...getInputProps()} />
+  
+      {/* Table content */}
+      <div className={cn(
+        "transition-opacity duration-200",
+        isDragActive && "opacity-30"
+      )}>
+        <ScrollArea className="h-[300px]">
+          <Table>
           <TableHeader className="sticky top-0 bg-white dark:bg-gray-800">
             <TableRow>
               <TableHead className="w-[50%]">Name</TableHead>
@@ -126,8 +154,32 @@ export default function FileList({
               )}
             )}
           </TableBody>
-        </Table>
-      </ScrollArea>
-    </div>
-  );
+          </Table>
+        </ScrollArea>
+      </div>
+
+  {/* Drag overlay */}
+  {isDragActive && (
+      <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+        <div className="flex flex-col items-center gap-4">
+          <Upload 
+            className={cn(
+              "h-12 w-12 animate-bounce",
+              isDragReject ? "text-red-500" : "text-blue-500"
+            )} 
+          />
+          <p className={cn(
+            "text-lg font-medium",
+            isDragReject ? "text-red-700 dark:text-red-300" : "text-blue-700 dark:text-blue-300"
+          )}>
+            {isDragReject 
+              ? "This file type is not supported" 
+              : "Drop files here to add"
+            }
+          </p>
+        </div>
+      </div>
+    )}
+  </div>
+);
 }

@@ -1,10 +1,10 @@
 // src/components/MaterialMeshEditor/MaterialItem.tsx
 
 import React from 'react';
-import { Move, Tag, Edit2, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Tag, Edit2, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import TagList from '@/components/ui/tag-list';
 import { cn } from "@/lib/utils";
 
 interface MaterialItemProps {
@@ -15,6 +15,7 @@ interface MaterialItemProps {
   onRenameMaterial: (name: string) => void;
   onRemoveMaterial: (name: string) => void;
   onMoveMaterial: (index: number, direction: 'up' | 'down') => void;
+  onRemoveTag: (materialName: string, tag: string) => void;
   provided: any;
 }
 
@@ -26,44 +27,36 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
   onRenameMaterial, 
   onRemoveMaterial,
   onMoveMaterial,
+  onRemoveTag,
   provided 
 }) => {
   return (
     <li
       ref={provided.innerRef}
       {...provided.draggableProps}
+      {...provided.dragHandleProps}
       className={cn(
-        "group flex justify-between items-center p-4 bg-white dark:bg-gray-800",
+        "group flex justify-between items-center p-4",
+        "bg-white dark:bg-gray-800",
         "rounded-lg border border-gray-200 dark:border-gray-700",
         "shadow-sm hover:shadow-md transition-all duration-200",
-        "relative overflow-hidden"
+        "relative overflow-hidden",
+        "cursor-grab active:cursor-grabbing",
+        "before:absolute before:inset-y-0 before:left-0 before:w-1",
+        "before:bg-gray-200 dark:before:bg-gray-700",
+        "before:group-hover:bg-blue-500 before:transition-colors"
       )}
     >
-      {/* Drag Handle */}
-      <div className="absolute inset-y-0 left-0 w-1 bg-gray-200 dark:bg-gray-700 group-hover:bg-blue-500 transition-colors" />
-      
-      <div className="flex items-center flex-1 ml-2">
-        <div 
-          {...provided.dragHandleProps} 
-          className="mr-3 cursor-grab hover:text-blue-500 transition-colors"
-        >
-          <Move size={16} />
-        </div>
+      <div className="flex items-center flex-1">
         <div className="flex flex-col">
           <span className="font-medium text-gray-900 dark:text-gray-100">
             {material.name}
           </span>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {material.tags.map(tag => (
-              <Badge 
-                key={tag} 
-                variant="secondary" 
-                className="text-xs bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-100"
-              >
-                {tag}
-              </Badge>
-            ))}
-          </div>
+          <TagList 
+            tags={material.tags}
+            onRemoveTag={(tag) => onRemoveTag(material.name, tag)}
+            className="mt-1"
+          />
         </div>
       </div>
 

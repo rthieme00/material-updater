@@ -216,6 +216,11 @@ export default function Home() {
           isOpen={isReferenceMeshesModalOpen}
           onClose={() => setIsReferenceMeshesModalOpen(false)}
           meshes={referenceMeshes}
+          currentMeshes={materialData?.meshAssignments ? Object.keys(materialData.meshAssignments).map(meshName => ({
+            name: meshName,
+            tags: [] // Add tags if you have them stored
+          })) : []}
+          currentAssignments={materialData?.meshAssignments || {}}
           onApply={(updatedMeshes, updatedMeshAssignments) => {
             if (materialData) {
               const updatedData = {

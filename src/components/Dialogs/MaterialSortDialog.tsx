@@ -21,6 +21,13 @@ interface TagState {
   enabled: boolean;
 }
 
+const STORAGE_KEY = 'materialSortSettings';
+
+interface MaterialSortSettings {
+  tagStates: TagState[];
+  timestamp: number;
+}
+
 interface MaterialSortDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -38,27 +45,155 @@ export default function MaterialSortDialog({
   const [searchTerm, setSearchTerm] = useState('');
   const [previewMaterials, setPreviewMaterials] = useState<Material[]>([]);
 
-  const updateMaterialOrder = useCallback((currentTagStates: TagState[]) => {
-    const enabledTags = currentTagStates
-      .filter(tag => tag.enabled)
-      .map(tag => tag.name);
-
-    const sortedMaterials = [...materials];
-    
-    sortedMaterials.sort((a, b) => {
-      for (const tag of enabledTags) {
-        const aHasTag = tag === 'Untagged' ? a.tags.length === 0 : a.tags.includes(tag);
-        const bHasTag = tag === 'Untagged' ? b.tags.length === 0 : b.tags.includes(tag);
-        
-        if (aHasTag && !bHasTag) return -1;
-        if (!aHasTag && bHasTag) return 1;
-        if (aHasTag && bHasTag) return 0;
-      }
+  // Load saved settings and initialize tag states
+  useEffect(() => {
+    if (isOpen) {
+      const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
       
-      return a.name.localeCompare(b.name);
-    });
+      // Try to load saved settings
+      const savedSettings = localStorage.getItem(STORAGE_KEY);
+      let initialTagStates: TagState[] = [];
 
-    setPreviewMaterials(sortedMaterials);
+      if (savedSettings) {
+        try {
+          const parsed: MaterialSortSettings = JSON.parse(savedSettings);
+          const savedTagStates = parsed.tagStates;
+
+          // Create a map of saved tag states
+          const savedTagStateMap = new Map(
+            savedTagStates.map(tag => [tag.name, tag])
+          );
+
+          // Initialize tags with saved states or defaults for new tags
+          initialTagStates = uniqueTags
+            .map(tag => ({
+              name: tag,
+              enabled: savedTagStateMap.get(tag)?.enabled ?? true
+            }));
+
+          // Add any saved tags that still exist
+          savedTagStates.forEach(savedTag => {
+            if (!initialTagStates.some(t => t.name === savedTag.name) && 
+                savedTag.name === 'Untagged') {
+              initialTagStates.push(savedTag);
+            }
+          });
+        } catch (error) {
+          console.error('Error loading saved sort settings:', error);
+          // Fall back to default initialization
+          initialTagStates = uniqueTags
+            .sort()
+            .map(tag => ({ name: tag, enabled: true }));
+        }
+      } else {
+        // No saved settings, use default initialization
+        initialTagStates = uniqueTags
+          .sort()
+          .map(tag => ({ name: tag, enabled: true }));
+      }
+
+      // Ensure 'Untagged' is always present
+      if (!initialTagStates.some(tag => tag.name === 'Untagged')) {
+        initialTagStates.push({ name: 'Untagged', enabled: true });
+      }
+
+      setTagStates(initialTagStates);
+      setPreviewMaterials([...materials]);
+    }
+  }, [isOpen, materials]);
+
+  // Save settings whenever tag states change
+  useEffect(() => {
+    if (tagStates.length > 0) {
+      const settings: MaterialSortSettings = {
+        tagStates,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    }
+  }, [tagStates]);
+
+  const sortMaterialsByTags = useCallback((currentTagStates: TagState[]) => {
+    // Include all tags in order, not just enabled ones
+    const tagOrder = currentTagStates
+      .filter(tag => tag.name !== 'Untagged')
+      .map(tag => tag.name);
+    
+    const isUntaggedEnabled = currentTagStates.find(t => t.name === 'Untagged')?.enabled ?? true;
+  
+    // Create groups for each tag and special groups
+    const materialGroups = new Map<string, Material[]>();
+    tagOrder.forEach(tag => materialGroups.set(tag, []));
+    materialGroups.set('untagged', []);
+    materialGroups.set('remaining', []); // For materials that don't match any tag
+  
+    // Helper function to find the highest priority tag for a material
+    const findHighestPriorityTag = (material: Material): string | null => {
+      for (const tag of tagOrder) {
+        if (material.tags.includes(tag)) {
+          return tag;
+        }
+      }
+      return null;
+    };
+  
+    // Distribute materials into groups based on tag priority
+    const sortedMaterials = [...materials];
+    sortedMaterials.forEach(material => {
+      if (material.tags.length === 0) {
+        materialGroups.get('untagged')?.push(material);
+        return;
+      }
+  
+      const highestPriorityTag = findHighestPriorityTag(material);
+      if (highestPriorityTag) {
+        materialGroups.get(highestPriorityTag)?.push(material);
+      } else {
+        materialGroups.get('remaining')?.push(material);
+      }
+    });
+  
+    // Sort groups based on their enabled state
+    tagOrder.forEach(tag => {
+      const group = materialGroups.get(tag);
+      const tagState = currentTagStates.find(t => t.name === tag);
+      
+      if (group && tagState?.enabled) {
+        // Only sort if the tag is enabled
+        materialGroups.set(tag, group.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    });
+  
+    // Handle untagged materials
+    const untaggedGroup = materialGroups.get('untagged');
+    if (untaggedGroup && isUntaggedEnabled) {
+      materialGroups.set('untagged', untaggedGroup.sort((a, b) => a.name.localeCompare(b.name)));
+    }
+  
+    // Build final sorted array maintaining tag priority order
+    const result: Material[] = [];
+    
+    // Add materials according to tag priority
+    tagOrder.forEach(tag => {
+      const group = materialGroups.get(tag);
+      if (group && group.length > 0) {
+        result.push(...group);
+      }
+    });
+  
+    // Add untagged materials
+    const untaggedMaterials = materialGroups.get('untagged') || [];
+    if (untaggedMaterials.length > 0) {
+      result.push(...untaggedMaterials);
+    }
+  
+    // Add any remaining materials
+    const remainingMaterials = materialGroups.get('remaining') || [];
+    if (remainingMaterials.length > 0) {
+      result.push(...remainingMaterials);
+    }
+  
+    return result;
   }, [materials]);
 
   useEffect(() => {
@@ -77,9 +212,10 @@ export default function MaterialSortDialog({
 
   useEffect(() => {
     if (tagStates.length > 0) {
-      updateMaterialOrder(tagStates);
+      const sorted = sortMaterialsByTags(tagStates);
+      setPreviewMaterials(sorted);
     }
-  }, [tagStates, updateMaterialOrder]);
+  }, [tagStates, sortMaterialsByTags]);
 
   const handleDragEnd = (result: any) => {
     if (!result.destination) return;
@@ -112,6 +248,17 @@ export default function MaterialSortDialog({
     setTagStates(newTagStates);
   };
 
+  // Reset button handler
+  const handleResetSettings = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
+    const resetTagStates = uniqueTags
+      .sort()
+      .map(tag => ({ name: tag, enabled: true }));
+    resetTagStates.push({ name: 'Untagged', enabled: true });
+    setTagStates(resetTagStates);
+  };
+
   const handleApply = () => {
     onApplySort(previewMaterials);
     onClose();
@@ -134,8 +281,9 @@ export default function MaterialSortDialog({
             <div className="space-y-2">
               <h3 className="text-sm font-medium">Tag Priority Order</h3>
               <p className="text-sm text-muted-foreground">
-                Drag tags or use arrow buttons to set priority. Toggle switches to enable/disable tags. 
-                Materials will be sorted by enabled tags in order, then alphabetically within each tag.
+                Drag tags or use arrow buttons to set priority. Toggle switches to enable/disable sorting. 
+                Materials will be sorted by enabled tags in order, then alphabetically within each enabled tag.
+                Materials with disabled tags will maintain their relative positions.
               </p>
             </div>
 
@@ -261,9 +409,24 @@ export default function MaterialSortDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="mt-4">
-          <Button onClick={onClose} variant="outline">Cancel</Button>
-          <Button onClick={handleApply}>Apply Order</Button>
+        <DialogFooter className="mt-4 flex justify-between items-center">
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleResetSettings} 
+              variant="outline" 
+              size="sm"
+            >
+              Reset to Default
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={onClose} variant="outline">
+              Cancel
+            </Button>
+            <Button onClick={handleApply}>
+              Apply Order
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -11,6 +11,7 @@ import DuplicateMaterialDialog from '../Dialogs/DuplicateMaterialDialog';
 import { debounce } from 'lodash';
 import { MaterialData, Material, MeshAssignment, Variant } from '@/gltf/gltfTypes'; // Import all types
 import { ScrollArea } from '../ui/scroll-area';
+import PreviewVariantsSection from './PreviewVariantsSection';
 
 interface MaterialMeshEditorProps {
   data: MaterialData;
@@ -18,7 +19,7 @@ interface MaterialMeshEditorProps {
   onUpdate: (data: MaterialData) => void;
 }
 
-const ITEMS_PER_PAGE = 5;
+const ITEMS_PER_PAGE = 7;
 
 const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({ 
   data, 
@@ -284,18 +285,35 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsTagDialogOpen(true);
   }, []);
 
-  const handleTagSubmit = useCallback((newTags: string) => {
-    if (currentItemToTag) {
-      const tagList = newTags.split(',').map(t => t.trim()).filter(t => t);
-      setMaterials(prevMaterials => 
-        prevMaterials.map(m => 
-          m.name === currentItemToTag ? { ...m, tags: tagList } : m
-        )
+// Add this to the existing handleTagSubmit function:
+const handleTagSubmit = useCallback((newTags: string) => {
+  if (currentItemToTag) {
+    // Allow empty tags by trimming and filtering empty strings
+    const tagList = newTags.split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0); // Only filter out completely empty tags
+
+    setMaterials(prevMaterials => {
+      const updatedMaterials = prevMaterials.map(m =>
+        m.name === currentItemToTag ? { ...m, tags: tagList } : m
       );
-      updateAllTags(materials);
-    }
-    setCurrentItemToTag(null);
-  }, [currentItemToTag, materials, updateAllTags]);
+      
+      // Update all tags
+      updateAllTags(updatedMaterials);
+      
+      // Update parent data
+      const updatedData = {
+        ...data,
+        materials: updatedMaterials
+      };
+      onUpdate(updatedData);
+      
+      return updatedMaterials;
+    });
+  }
+  setCurrentItemToTag(null);
+  setIsTagDialogOpen(false);
+}, [currentItemToTag, data, onUpdate, updateAllTags]);
 
   const onDragEnd = (result: any) => {
     if (!result.destination) {
@@ -313,23 +331,28 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setMaterials(prevMaterials => [...prevMaterials].sort((a, b) => a.name.localeCompare(b.name)));
   };
 
-  const handleAutoAssignTag = (meshName: string) => {
-    const tag = prompt('Enter tag to auto-assign:');
-    if (tag) {
-      const taggedMaterials = materials.filter(m => m.tags.includes(tag));
-      if (taggedMaterials.length > 0) {
-        setMeshAssignments(prev => ({
-          ...prev,
-          [meshName]: {
-            defaultMaterial: taggedMaterials[0].name,
-            variants: taggedMaterials.map(m => ({ name: m.name, material: m.name }))
-          }
-        }));
-      } else {
-        alert('No materials found with the specified tag.');
-      }
+  // Update the auto-assign handler
+  const handleAutoAssignTag = (meshName: string, selectedTag: string) => {
+    const taggedMaterials = materials.filter(m => m.tags.includes(selectedTag));
+    if (taggedMaterials.length > 0) {
+      setMeshAssignments(prev => ({
+        ...prev,
+        [meshName]: {
+          defaultMaterial: taggedMaterials[0].name,
+          variants: taggedMaterials.map(m => ({ name: m.name, material: m.name }))
+        }
+      }));
     }
   };
+
+    // Collect all unique tags
+    const uniqueTags = useMemo(() => {
+      const tags = new Set<string>();
+      materials.forEach(material => {
+        material.tags.forEach(tag => tags.add(tag));
+      });
+      return Array.from(tags).sort();
+    }, [materials]);
 
   const handleRenameMesh = useCallback((meshName: string) => {
     setCurrentItemToRename(meshName);
@@ -492,6 +515,104 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   const meshItems = Object.entries(meshAssignments);
   const totalPages = Math.ceil(meshItems.length / ITEMS_PER_PAGE);
 
+  const handleMeshOrderChange = useCallback((result: any) => {
+    if (!result.destination) return;
+
+    const allItems = Object.entries(meshAssignments);
+    const sourceIndex = (currentPage - 1) * ITEMS_PER_PAGE + result.source.index;
+    const destinationIndex = (currentPage - 1) * ITEMS_PER_PAGE + result.destination.index;
+
+    // Prevent dragging outside current page
+    if (Math.floor(sourceIndex / ITEMS_PER_PAGE) !== Math.floor(destinationIndex / ITEMS_PER_PAGE)) {
+      return;
+    }
+
+    const [reorderedItem] = allItems.splice(sourceIndex, 1);
+    allItems.splice(destinationIndex, 0, reorderedItem);
+
+    const newAssignments = allItems.reduce((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {} as typeof meshAssignments);
+
+    setMeshAssignments(newAssignments);
+
+    // Update parent component
+    const updatedData: MaterialData = {
+      ...data,
+      materials,
+      meshAssignments: newAssignments
+    };
+    onUpdate(updatedData);
+  }, [meshAssignments, materials, data, onUpdate, currentPage, ITEMS_PER_PAGE]);
+
+  const handleMoveMesh = useCallback((fromIndex: number, direction: 'up' | 'down') => {
+    const allItems = Object.entries(meshAssignments);
+    const actualFromIndex = (currentPage - 1) * ITEMS_PER_PAGE + fromIndex;
+    const actualToIndex = actualFromIndex + (direction === 'up' ? -1 : 1);
+    
+    if (actualToIndex < 0 || actualToIndex >= allItems.length) return;
+
+    // If moving between pages, update the current page
+    const newPage = Math.floor(actualToIndex / ITEMS_PER_PAGE) + 1;
+    if (newPage !== currentPage) {
+      setCurrentPage(newPage);
+    }
+
+    [allItems[actualFromIndex], allItems[actualToIndex]] = 
+    [allItems[actualToIndex], allItems[actualFromIndex]];
+    
+    const newAssignments = allItems.reduce((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {} as typeof meshAssignments);
+
+    setMeshAssignments(newAssignments);
+
+    // Update parent component
+    const updatedData: MaterialData = {
+      ...data,
+      materials,
+      meshAssignments: newAssignments
+    };
+    onUpdate(updatedData);
+  }, [meshAssignments, materials, data, onUpdate, currentPage, ITEMS_PER_PAGE, setCurrentPage]);
+
+  // Helper function to determine if an item can move up/down
+  const canMove = useCallback((index: number, direction: 'up' | 'down'): boolean => {
+    const actualIndex = (currentPage - 1) * ITEMS_PER_PAGE + index;
+    if (direction === 'up') {
+      return actualIndex > 0;
+    } else {
+      return actualIndex < Object.keys(meshAssignments).length - 1;
+    }
+  }, [currentPage, ITEMS_PER_PAGE, meshAssignments]);
+
+  
+
+  // Add this new function to handle tag removal:
+const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) => {
+  setMaterials(prevMaterials => {
+    const updatedMaterials = prevMaterials.map(m =>
+      m.name === materialName
+        ? { ...m, tags: m.tags.filter(tag => tag !== tagToRemove) }
+        : m
+    );
+
+    // Update all tags
+    updateAllTags(updatedMaterials);
+
+    // Update parent data
+    const updatedData = {
+      ...data,
+      materials: updatedMaterials
+    };
+    onUpdate(updatedData);
+
+    return updatedMaterials;
+  });
+}, [data, onUpdate, updateAllTags]);
+
   const handleSave = () => {
     const updatedData = {
       materials,
@@ -522,18 +643,36 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           >
             Mesh Assignments
           </Button>
+          <Button
+            onClick={() => setActiveSection('variants')}
+            variant={activeSection === 'variants' ? "default" : "outline"}
+            size="sm"
+            className="w-32"
+          >
+            Preview Variants
+          </Button>
         </div>
 
-        {/* Action Buttons - Always show Clear button */}
+        {/* Action Buttons */}
         <div className="flex gap-2">
-          {data.materials.length > 0 && (
-            <Button 
-              onClick={handleSave}
-              size="sm"
-              className="w-24"
-            >
-              Save
-            </Button>
+          {activeSection === 'materials' && (
+            <>
+              <Button 
+                onClick={() => setIsSortDialogOpen(true)}
+                size="sm"
+                variant="outline"
+              >
+                Sort Materials
+              </Button>
+              {data.materials.length > 0 && (
+                <Button 
+                  onClick={handleSave}
+                  size="sm"
+                >
+                  Save
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -546,7 +685,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               materials={materials}
               onDragEnd={handleMaterialOrderChange}
               onAddMaterials={handleAddMaterialsClick}
-              onSortMaterials={() => setIsSortDialogOpen(true)}
               onEditTags={handleEditTags}
               onRenameMaterial={(name) => {
                 setCurrentItemToRename(name);
@@ -554,6 +692,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               }}
               onRemoveMaterial={handleRemoveMaterial}
               onMoveMaterial={handleMoveMaterial}
+              onRemoveTag={handleRemoveTag}  // Add this line
             />
           )}
           {activeSection === 'meshes' && (
@@ -564,7 +703,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onToggleMeshExpansion={toggleMeshExpansion}
               onRenameMesh={handleRenameMesh}
               onRemoveMesh={handleRemoveMesh}
-              onAutoAssignTag={handleAutoAssignTag}
               onAssignmentChange={handleAssignmentChange}
               onVariantChange={handleVariantChange}
               onRemoveVariant={handleRemoveVariant}
@@ -573,6 +711,18 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               currentPage={currentPage}
               totalPages={totalPages}
               onPageChange={setCurrentPage}
+              onDragEnd={handleMeshOrderChange}
+              onMoveMesh={handleMoveMesh}
+              canMove={canMove}
+              totalItems={Object.keys(meshAssignments).length}
+              availableTags={uniqueTags}
+              onAutoAssignTag={handleAutoAssignTag}
+            />
+          )}
+          {activeSection === 'variants' && (
+            <PreviewVariantsSection
+              meshAssignments={meshAssignments}
+              materials={materials}
             />
           )}
         </div>
