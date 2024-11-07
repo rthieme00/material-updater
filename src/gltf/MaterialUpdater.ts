@@ -18,6 +18,96 @@ function createMaterialIndexMapping(
   return mapping;
 }
 
+// Helper function to determine if a texture is an AO texture
+function isAOTexture(texture: GltfTexture, images: GltfImage[]): boolean {
+  if (!texture.source && texture.source !== 0) return false;
+  const image = images[texture.source];
+  if (!image || !image.name) return false;
+  
+  const imageName = image.name.toLowerCase();
+  return imageName.includes('_ao') || imageName.includes('ambientocclusion');
+}
+
+// Helper function to identify and preserve AO textures from target data
+function preserveAOTextures(
+  targetData: GltfData,
+  referenceData: GltfData
+): {
+  targetAOTextureMap: Map<string, { textureIndex: number; imageIndex: number }>;
+} {
+  const targetAOTextureMap = new Map<string, { textureIndex: number; imageIndex: number }>();
+
+  // Find AO textures in target file and map them to material names
+  targetData.materials.forEach((material, materialIndex) => {
+    if (material.occlusionTexture) {
+      const textureIndex = material.occlusionTexture.index;
+      if (textureIndex !== undefined) {
+        const texture = targetData.textures[textureIndex];
+        if (isAOTexture(texture, targetData.images) && texture.source !== undefined) {
+          targetAOTextureMap.set(material.name, {
+            textureIndex: textureIndex,
+            imageIndex: texture.source
+          });
+        }
+      }
+    }
+  });
+
+  return { targetAOTextureMap };
+}
+
+// Helper function to handle AO texture replacement
+function handleAOTextures(
+  targetData: GltfData,
+  referenceData: GltfData
+): {
+  updatedTextures: GltfTexture[];
+  updatedImages: GltfImage[];
+  textureIndexMap: Map<number, number>;
+} {
+  const textureIndexMap = new Map<number, number>();
+  const updatedTextures = [...referenceData.textures];
+  const updatedImages = [...referenceData.images];
+
+  // First, identify all AO textures in both files
+  targetData.materials.forEach((targetMaterial) => {
+    if (!targetMaterial.occlusionTexture) return;
+
+    const refMaterial = referenceData.materials.find(m => m.name === targetMaterial.name);
+    if (!refMaterial || !refMaterial.occlusionTexture) return;
+
+    const targetTextureIndex = targetMaterial.occlusionTexture.index;
+    const refTextureIndex = refMaterial.occlusionTexture.index;
+
+    if (targetTextureIndex === undefined || refTextureIndex === undefined) return;
+
+    const targetTexture = targetData.textures[targetTextureIndex];
+    const refTexture = referenceData.textures[refTextureIndex];
+
+    if (!isAOTexture(targetTexture, targetData.images) || !isAOTexture(refTexture, referenceData.images)) return;
+
+    if (targetTexture.source !== undefined && refTexture.source !== undefined) {
+      // Replace the reference AO image with the target AO image
+      updatedImages[refTexture.source] = targetData.images[targetTexture.source];
+      
+      // Update the texture to maintain the same sampler but point to the replaced image
+      updatedTextures[refTextureIndex] = {
+        ...refTexture,
+        source: refTexture.source // Keep the same image index since we replaced the image
+      };
+
+      // Map the target texture index to the reference texture index
+      textureIndexMap.set(targetTextureIndex, refTextureIndex);
+    }
+  });
+
+  return {
+    updatedTextures,
+    updatedImages,
+    textureIndexMap
+  };
+}
+
 // Helper function to update material indices in variant mappings
 function updateVariantMappings(
   primitive: any,
@@ -40,13 +130,11 @@ function validateMaterialAssignments(
 ): boolean {
   const materialNames = new Set(materials.map(m => m.name));
   
-  // Check default material
   if (assignment.defaultMaterial && !materialNames.has(assignment.defaultMaterial)) {
     console.warn(`Invalid default material "${assignment.defaultMaterial}" for mesh "${meshName}"`);
     return false;
   }
 
-  // Check variant materials
   for (const variant of assignment.variants) {
     if (!materialNames.has(variant.material)) {
       console.warn(`Invalid variant material "${variant.material}" for mesh "${meshName}"`);
@@ -185,13 +273,18 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
   });
 }
 
+// Update applyMoodRotation to preserve AO textures
 function applyMoodRotation(targetData: GltfData, isBlavalen: boolean) {
   targetData.materials.forEach((material: GltfMaterial) => {
     if (material.name.startsWith('MOO-')) {
       const rotation = isBlavalen ? 0 : 1.56;
       const applyRotation = (texture: any) => {
         if (texture && texture.extensions && texture.extensions.KHR_texture_transform) {
-          texture.extensions.KHR_texture_transform.rotation = rotation;
+          // Don't rotate AO textures
+          const isAO = isAOTexture(targetData.textures[texture.index], targetData.images);
+          if (!isAO) {
+            texture.extensions.KHR_texture_transform.rotation = rotation;
+          }
         }
       };
 
@@ -218,6 +311,13 @@ export async function updateMaterials(
   }
 
   try {
+    // Handle AO texture replacement
+    const {
+      updatedTextures,
+      updatedImages,
+      textureIndexMap
+    } = handleAOTextures(targetData, referenceData);
+
     // Copy extensions from reference
     targetData.extensions = referenceData.extensions;
     targetData.extensionsRequired = referenceData.extensionsRequired;
@@ -229,20 +329,21 @@ export async function updateMaterials(
     const orderedMaterials: GltfMaterial[] = [];
     const materialNameToNewIndex = new Map<string, number>();
 
-    // First, add materials in the order specified in materialData
+    // Add materials in the order specified in materialData
     materialData.materials.forEach((jsonMaterial, index) => {
       const refMaterial = referenceData.materials.find(m => m.name === jsonMaterial.name);
       if (refMaterial) {
-        orderedMaterials.push(refMaterial);
+        const material = cloneDeep(refMaterial);
+        orderedMaterials.push(material);
         materialNameToNewIndex.set(jsonMaterial.name, index);
       }
     });
 
-    // Then add any remaining materials from the reference that weren't in materialData
+    // Add remaining materials from reference
     referenceData.materials.forEach(material => {
       if (!materialNameToNewIndex.has(material.name)) {
         materialNameToNewIndex.set(material.name, orderedMaterials.length);
-        orderedMaterials.push(material);
+        orderedMaterials.push(cloneDeep(material));
       }
     });
 
@@ -257,27 +358,24 @@ export async function updateMaterials(
 
     progressCallback(0.4);
 
-    // Update material references in meshes and variants
+    // Update material references in meshes
     targetData.meshes.forEach(mesh => {
       mesh.primitives.forEach(primitive => {
-        // Update main material reference
         if (primitive.material !== undefined) {
           const newIndex = materialIndexMapping.get(primitive.material);
           if (newIndex !== undefined) {
             primitive.material = newIndex;
           }
         }
-
-        // Update variant mappings
         updateVariantMappings(primitive, materialIndexMapping);
       });
     });
 
-    // Assign the reordered materials and other assets
+    // Assign the updated assets
     targetData.materials = orderedMaterials;
-    targetData.textures = referenceData.textures;
-    targetData.images = referenceData.images;
-    targetData.samplers = targetData.samplers || [];
+    targetData.textures = updatedTextures;
+    targetData.images = updatedImages;
+    targetData.samplers = referenceData.samplers;
 
     progressCallback(0.6);
 
