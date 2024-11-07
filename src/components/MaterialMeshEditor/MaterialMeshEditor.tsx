@@ -10,6 +10,7 @@ import MaterialSortDialog from '../Dialogs/MaterialSortDialog';
 import DuplicateMaterialDialog from '../Dialogs/DuplicateMaterialDialog';
 import { debounce } from 'lodash';
 import { MaterialData, Material, MeshAssignment, Variant } from '@/gltf/gltfTypes'; // Import all types
+import { ScrollArea } from '../ui/scroll-area';
 
 interface MaterialMeshEditorProps {
   data: MaterialData;
@@ -500,31 +501,51 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-lg text-gray-800">
-      <h3 className="text-2xl font-bold mb-6 text-center text-gray-800">Material and Mesh Editor</h3>
-      <div className="flex space-x-4 mb-6">
-        <Button
-          onClick={() => setActiveSection('materials')}
-          variant={activeSection === 'materials' ? "default" : "outline"}
-          className="flex-1"
-        >
-          Materials
-        </Button>
-        <Button
-          onClick={() => setActiveSection('meshes')}
-          variant={activeSection === 'meshes' ? "default" : "outline"}
-          className="flex-1"
-        >
-          Mesh Assignments
-        </Button>
+    <div className="flex flex-col h-full p-4">
+      {/* Top Actions Bar */}
+      <div className="flex items-center justify-between mb-4 pb-4 border-b">
+        {/* Section Tabs */}
+        <div className="flex space-x-2">
+          <Button
+            onClick={() => setActiveSection('materials')}
+            variant={activeSection === 'materials' ? "default" : "outline"}
+            size="sm"
+            className="w-32"
+          >
+            Materials
+          </Button>
+          <Button
+            onClick={() => setActiveSection('meshes')}
+            variant={activeSection === 'meshes' ? "default" : "outline"}
+            size="sm"
+            className="w-32"
+          >
+            Mesh Assignments
+          </Button>
+        </div>
+
+        {/* Action Buttons - Always show Clear button */}
+        <div className="flex gap-2">
+          {data.materials.length > 0 && (
+            <Button 
+              onClick={handleSave}
+              size="sm"
+              className="w-24"
+            >
+              Save
+            </Button>
+          )}
+        </div>
       </div>
-      <Card>
-        <CardContent>
+
+      {/* Content Area with ScrollArea */}
+      <ScrollArea className="flex-1 h-[calc(100vh-12rem)] pr-4">
+        <div className="h-full">
           {activeSection === 'materials' && (
             <MaterialsSection
               materials={materials}
               onDragEnd={handleMaterialOrderChange}
-              onAddMaterials={handleAddMaterialsClick}  // Updated to use new handler
+              onAddMaterials={handleAddMaterialsClick}
               onSortMaterials={() => setIsSortDialogOpen(true)}
               onEditTags={handleEditTags}
               onRenameMaterial={(name) => {
@@ -535,27 +556,27 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onMoveMaterial={handleMoveMaterial}
             />
           )}
-            {activeSection === 'meshes' && (
-              <MeshAssignmentsSection
-                meshItems={meshItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)}
-                materials={materials}
-                expandedMeshes={expandedMeshes}
-                onToggleMeshExpansion={toggleMeshExpansion}
-                onRenameMesh={handleRenameMesh}
-                onRemoveMesh={handleRemoveMesh}
-                onAutoAssignTag={handleAutoAssignTag}
-                onAssignmentChange={handleAssignmentChange}
-                onVariantChange={handleVariantChange} // Using non-debounced version for now
-                onRemoveVariant={handleRemoveVariant}
-                onAddVariant={handleAddVariant}
-                onAddMesh={handleAddMeshClick}  // Updated to use new handler
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPageChange={setCurrentPage}
-              />
+          {activeSection === 'meshes' && (
+            <MeshAssignmentsSection
+              meshItems={meshItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)}
+              materials={materials}
+              expandedMeshes={expandedMeshes}
+              onToggleMeshExpansion={toggleMeshExpansion}
+              onRenameMesh={handleRenameMesh}
+              onRemoveMesh={handleRemoveMesh}
+              onAutoAssignTag={handleAutoAssignTag}
+              onAssignmentChange={handleAssignmentChange}
+              onVariantChange={handleVariantChange}
+              onRemoveVariant={handleRemoveVariant}
+              onAddVariant={handleAddVariant}
+              onAddMesh={handleAddMeshClick}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+            />
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </ScrollArea>
 
       {/* Add Material Dialog */}
       <InputDialog
@@ -604,10 +625,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         title="Add Mesh"
         description="Enter mesh name"
       />
-
-      <Button onClick={handleSave} className="mt-6 w-full">
-        Save Changes
-      </Button>
     </div>
   );
 };

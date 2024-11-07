@@ -9,6 +9,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { AlertOctagon } from 'lucide-react';
+import { motion } from "framer-motion";
 
 interface ErrorDialogProps {
   isOpen: boolean;
@@ -21,13 +23,27 @@ const ErrorDialog: React.FC<ErrorDialogProps> = ({ isOpen, onClose, message }) =
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Error</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 text-red-500">
+            <AlertOctagon className="h-5 w-5" />
+            Error Occurred
+          </DialogTitle>
         </DialogHeader>
-        <div className="mt-2">
-          <p className="text-sm text-red-600">{message}</p>
-        </div>
-        <DialogFooter>
-          <Button onClick={onClose}>Close</Button>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-4 p-4 rounded-lg bg-red-50 dark:bg-red-950/30"
+        >
+          <p className="text-sm text-red-700 dark:text-red-300">
+            {message}
+          </p>
+        </motion.div>
+        <DialogFooter className="mt-6">
+          <Button 
+            onClick={onClose}
+            className="bg-red-500 hover:bg-red-600 text-white"
+          >
+            Close
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

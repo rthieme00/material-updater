@@ -3,6 +3,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import Providers from "@/components/Providers";
 import "./globals.css";
 import { StrictMode } from 'react';
 
@@ -23,7 +24,9 @@ export default function RootLayout({
       <body className={inter.className}>
         <StrictMode>
           <ErrorBoundary>
-            {children}
+            <Providers>
+              {children}
+            </Providers>
           </ErrorBoundary>
         </StrictMode>
       </body>

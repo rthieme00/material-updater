@@ -6,19 +6,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { updateMaterials, exportIndividualVariants } from '@/gltf/MaterialUpdater';
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import FileUpload from './FileUpload/FileUpload';
+import FileList from './FileUpload/FileList';
 import ProgressDisplay from './ProgressDisplay/ProgressDisplay';
 import WarningDialog from './Dialogs/WarningDialog';
 import ErrorDialog from './Dialogs/ErrorDialog';
+import PermissionDialog from './Dialogs/PermissionDialog';
 import { MaterialData, GltfData } from '@/gltf/gltfTypes';
 import { saveFileWithFallback } from '@/utils/fileHandling';
-import PermissionDialog from './Dialogs/PermissionDialog';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import * as THREE from 'three';
+import { formatFileSize } from '@/lib/utils';
+import { ArrowUpDown, FolderOpen, Settings2 } from 'lucide-react';
 
 declare global {
   interface Window {
-    showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
+    showDirectoryPicker(): Promise<FileSystemDirectoryHandle>;
   }
 }
 
@@ -38,7 +41,7 @@ interface GltfUpdaterProps {
   updateMaterialData: (updatedData: MaterialData) => void;
 }
 
-export default function GltfUpdater({
+const GltfUpdater: React.FC<GltfUpdaterProps> = ({
   materialData,
   referenceFile,
   setReferenceFile,
@@ -52,7 +55,7 @@ export default function GltfUpdater({
   openReferenceMaterialsModal,
   openReferenceMeshesModal,
   updateMaterialData
-}: GltfUpdaterProps) {
+}) => {
   const [targetFiles, setTargetFiles] = useState<File[]>([]);
   const [applyVariants, setApplyVariants] = useState(true);
   const [applyMoodRotation, setApplyMoodRotation] = useState(true);
@@ -72,62 +75,79 @@ export default function GltfUpdater({
   const [concurrentProcesses, setConcurrentProcesses] = useState(1);
   const [currentlyProcessingFiles, setCurrentlyProcessingFiles] = useState<string[]>([]);
   const [latestProcessedFile, setLatestProcessedFile] = useState<string | null>(null);
-  const [exportGlb, setExportGlb] = useState(false);
-
-  const referenceFileInputRef = useRef<HTMLInputElement>(null);
-  const targetFilesInputRef = useRef<HTMLInputElement>(null);
-  const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
-
+  const [fileErrors, setFileErrors] = useState<{[key: string]: string}>({});
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [hasFileSystemPermission, setHasFileSystemPermission] = useState(false);
 
-  useEffect(() => {
-    const loader = new DRACOLoader();
-    loader.setDecoderPath('/draco/gltf/');
-    loader.preload();
-    setDracoLoader(loader);
+  const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
 
-    return () => {
-      loader.dispose();
-    };
-  }, []); 
+  const validateFile = (file: File) => {
+    const errors: {[key: string]: string} = {};
+    const maxSize = 100 * 1024 * 1024;
+    
+    if (file.size > maxSize) {
+      errors[file.name] = `File size exceeds 100MB limit (${formatFileSize(file.size)})`;
+    }
+    
+    const validExtensions = ['.gltf', '.glb'];
+    const extension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    if (!validExtensions.includes(extension)) {
+      errors[file.name] = 'Invalid file type. Only .gltf and .glb files are supported.';
+    }
+    
+    return errors;
+  };
 
-  const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      const file = event.target.files[0];
-      setReferenceFile(file, event.target.value);
-      setFeedback(`Reference file selected: ${file.name}`);
-      
-      try {
-        const content = await file.text();
-        const data = JSON.parse(content) as GltfData;
-        
-        if (!data.materials || !data.meshes) {
-          throw new Error("Invalid GLTF file: missing materials or meshes");
-        }
+  const handleReferenceFileSelect = async (fileOrFiles: File | File[]) => {
+    // Handle single file
+    const file = Array.isArray(fileOrFiles) ? fileOrFiles[0] : fileOrFiles;
+    
+    const errors = validateFile(file);
+    if (Object.keys(errors).length > 0) {
+      setFileErrors(errors);
+      return;
+    }
   
-        setReferenceMaterials(data.materials.map(m => m.name));
-        setReferenceMeshes(data.meshes.map(m => m.name));
-      } catch (error) {
-        console.error("Error processing reference file:", error);
-        setErrorMessage(`Error processing reference file: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setIsErrorDialogOpen(true);
+    setReferenceFile(file, file.name);
+    setFeedback(`Reference file selected: ${file.name}`);
+    
+    try {
+      const content = await file.text();
+      const data = JSON.parse(content) as GltfData;
+      
+      if (!data.materials || !data.meshes) {
+        throw new Error("Invalid GLTF file: missing materials or meshes");
       }
+  
+      setReferenceMaterials(data.materials.map(m => m.name));
+      setReferenceMeshes(data.meshes.map(m => m.name));
+    } catch (error) {
+      setErrorMessage(`Error processing reference file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsErrorDialogOpen(true);
     }
   };
 
-  const handleTargetFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const newFiles = Array.from(event.target.files);
-      setTargetFiles(prev => [...prev, ...newFiles]);
-      setFeedback(`${newFiles.length} target file(s) added`);
+  const handleTargetFilesSelect = (fileOrFiles: File | File[]) => {
+    const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+    
+    const newErrors: {[key: string]: string} = {};
+    const validFiles = files.filter(file => {
+      const errors = validateFile(file);
+      if (Object.keys(errors).length > 0) {
+        Object.assign(newErrors, errors);
+        return false;
+      }
+      return true;
+    });
+  
+    if (Object.keys(newErrors).length > 0) {
+      setFileErrors(prev => ({...prev, ...newErrors}));
     }
-  };
-
-  const handleClearFiles = () => {
-    setTargetFiles([]);
-    setFeedback('All files cleared');
-    if (targetFilesInputRef.current) targetFilesInputRef.current.value = '';
+  
+    if (validFiles.length > 0) {
+      setTargetFiles(prev => [...prev, ...validFiles]);
+      setFeedback(`Added ${validFiles.length} target file(s)`);
+    }
   };
 
   const handleOutputDirectorySelect = async () => {
@@ -140,7 +160,6 @@ export default function GltfUpdater({
       setFeedback('Output directory selected successfully.');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        // User cancelled the selection
         return;
       }
       console.error('Error selecting output directory:', error);
@@ -152,7 +171,6 @@ export default function GltfUpdater({
   const requestFileSystemPermission = async () => {
     if (outputDirectory) {
       try {
-        // Request permission
         const permission = await outputDirectory.requestPermission({ mode: 'readwrite' });
         if (permission === 'granted') {
           setHasFileSystemPermission(true);
@@ -170,37 +188,11 @@ export default function GltfUpdater({
     setIsPermissionDialogOpen(false);
   };
 
-  const saveFile = async (fileName: string, content: ArrayBuffer) => {
-    if (!directoryHandleRef.current) {
-      throw new Error("Directory not selected");
-    }
-    try {
-      const fileHandle = await directoryHandleRef.current.getFileHandle(fileName, { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(content);
-      await writable.close();
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'SecurityError') {
-        setErrorMessage('Permission to write files was denied. Please try again and grant permission when prompted.');
-        setIsErrorDialogOpen(true);
-        throw error;
-      }
-      throw error;
-    }
+  const handleClearFiles = () => {
+    setTargetFiles([]);
+    setFileErrors({});
+    setFeedback('All files cleared');
   };
-
-  const [dracoLoader, setDracoLoader] = useState<DRACOLoader | null>(null);
-
-  useEffect(() => {
-    const loader = new DRACOLoader();
-    loader.setDecoderPath('/draco/gltf/');
-    loader.preload();
-    setDracoLoader(loader);
-
-    return () => {
-      loader.dispose();
-    };
-  }, []);
 
   const processFiles = useCallback(async () => {
     if (!referenceFile || targetFiles.length === 0 || !materialData || !outputDirectory) {
@@ -208,35 +200,34 @@ export default function GltfUpdater({
       setIsErrorDialogOpen(true);
       return;
     }
-  
+
     try {
       const referenceContent = await referenceFile.text();
       const referenceData = JSON.parse(referenceContent) as GltfData;
-  
+
       setFeedback('Processing files...');
       setProgress(0);
       setIsProcessing(true);
       setLatestProcessedFile(null);
-  
+
       directoryHandleRef.current = outputDirectory;
-  
+
       const workerPool = new Array(concurrentProcesses).fill(null).map(() => 
         new Worker(new URL('../workers/gltfWorker.ts', import.meta.url))
       );
-  
+
       let completedFiles = 0;
       const totalFiles = targetFiles.length;
-  
-      const processFile = async (file: File, workerIndex: number) => {
-        const worker = workerPool[workerIndex];
+
+      const processFile = async (file: File, worker: Worker) => {
         setCurrentlyProcessingFiles(prev => [...prev, file.name]);
         
         try {
           const content = await file.text();
           const jsonData = JSON.parse(content) as GltfData;
-  
+
           return new Promise((resolve, reject) => {
-            worker.onmessage = async (e: MessageEvent) => {
+            worker.onmessage = async (e) => {
               try {
                 if (e.data.type === 'progress') {
                   const fileProgress = e.data.progress;
@@ -247,7 +238,7 @@ export default function GltfUpdater({
                   if (processingMode === 'update') {
                     await saveFileWithFallback(file.name, e.data.result, outputDirectory);
                     setLatestProcessedFile(file.name);
-                  } else if (processingMode === 'export') {
+                  } else {
                     for (const variant of e.data.result.exportedVariants) {
                       await saveFileWithFallback(variant.fileName, variant.content, outputDirectory);
                       setLatestProcessedFile(variant.fileName);
@@ -262,9 +253,8 @@ export default function GltfUpdater({
                 reject(error);
               }
             };
-  
-            // Send only serializable data to the worker
-            const messageData = {
+
+            worker.postMessage({
               referenceData,
               targetData: jsonData,
               model: selectedModel,
@@ -275,33 +265,30 @@ export default function GltfUpdater({
               fileName: file.name,
               refFileName: referenceFileName,
               targetFileName: file.name
-            };
-  
-            worker.postMessage(messageData);
+            });
           });
         } catch (error) {
           setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
           throw error;
         }
       };
-  
+
       const chunks = [];
       for (let i = 0; i < targetFiles.length; i += concurrentProcesses) {
         chunks.push(targetFiles.slice(i, i + concurrentProcesses));
       }
       setTotalChunks(chunks.length);
-  
+
       for (let i = 0; i < chunks.length; i++) {
         setCurrentChunk(i + 1);
-        await Promise.all(chunks[i].map((file, index) => processFile(file, index)));
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await Promise.all(chunks[i].map((file, index) => processFile(file, workerPool[index])));
       }
-  
+
       workerPool.forEach(worker => worker.terminate());
-      setFeedback('All files processed and saved to output directory.');
+      setFeedback('All files processed successfully.');
     } catch (error) {
-      console.error('Error processing materials:', error);
-      setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error processing files:', error);
+      setErrorMessage(`Error processing files: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsErrorDialogOpen(true);
     } finally {
       setProgress(100);
@@ -314,230 +301,236 @@ export default function GltfUpdater({
     referenceFile,
     targetFiles,
     materialData,
+    outputDirectory,
     processingMode,
     selectedModel,
     applyVariants,
     applyMoodRotation,
-    outputDirectory,
     concurrentProcesses,
     referenceFileName,
     setFeedback
   ]);
-  const handleReselectFile = () => {
-    if (referenceFileInputRef.current) {
-      referenceFileInputRef.current.click();
-    }
-  };
 
-  const buttonDisabled = (!referenceFile && !isReferenceFileStored) || 
+  const buttonDisabled = !referenceFile && !isReferenceFileStored || 
     targetFiles.length === 0 || 
     !materialData || 
     isProcessing || 
     !outputDirectory;
 
-  console.log('Button state:', {
-    hasReferenceFile: !!referenceFile,
-    isReferenceFileStored,
-    targetFilesCount: targetFiles.length,
-    hasMaterialData: !!materialData,
-    isProcessing,
-    hasOutputDirectory: !!outputDirectory,
-    isDisabled: buttonDisabled
-  });
-
   return (
-    <div className="space-y-6">
-      <div>
-        <Label htmlFor="referenceFile">Reference File:</Label>
-        <div className="flex items-center space-x-2">
-          <Input 
-            id="referenceFile" 
-            type="file" 
-            accept=".gltf,.glb" 
-            onChange={handleReferenceFileSelect} 
-            ref={referenceFileInputRef} 
-            className="mt-1" 
-          />
-          {isReferenceFileStored && !referenceFile && (
-            <Button 
-              onClick={handleReselectFile}
-              variant="outline"
-            >
-              Reselect File
-            </Button>
+    <div className="space-y-8">
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <Label className="text-lg font-semibold">Reference File</Label>
+          {isReferenceFileStored && referenceFileName && (
+            <div className="flex gap-2">
+              <Button 
+                onClick={openReferenceMaterialsModal} 
+                variant="outline" 
+                size="sm"
+                className="text-blue-600 hover:text-blue-700"
+              >
+                View Materials
+              </Button>
+              <Button 
+                onClick={openReferenceMeshesModal} 
+                variant="outline" 
+                size="sm"
+                className="text-blue-600 hover:text-blue-700"
+              >
+                View Meshes
+              </Button>
+            </div>
           )}
         </div>
-        {(referenceFileName || isReferenceFileStored) && (
-          <div className="mt-2">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-sm">
-                  {referenceFile ? `Selected: ${referenceFile.name}` : `Stored: ${referenceFileName}`}
-                </p>
-                {!referenceFile && isReferenceFileStored && (
-                  <p className="text-xs text-gray-500 mt-1">File needs to be reselected after page refresh</p>
-                )}
-              </div>
-              <div className="flex space-x-2">
-                <Button onClick={openReferenceMaterialsModal} variant="outline" size="sm">
-                  View Materials
-                </Button>
-                <Button onClick={openReferenceMeshesModal} variant="outline" size="sm">
-                  View Meshes
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+        <FileUpload
+        onFileSelect={handleReferenceFileSelect}
+        accept=".gltf,.glb"
+        label="Drop reference GLTF file here"
+        selectedFileName={referenceFileName}
+        onClearFile={clearReferenceFile}
+        error={Object.values(fileErrors)[0]}
+        multiple={false}
+      />
+      </section>
 
-      <div>
-        <Label htmlFor="targetFiles">Target Files:</Label>
-        <Input 
-          id="targetFiles" 
-          type="file" 
-          accept=".gltf,.glb" 
-          multiple 
-          onChange={handleTargetFilesSelect} 
-          ref={targetFilesInputRef} 
-          className="mt-1" 
+      <Separator />
+
+      {/* Target Files Section */}
+      <section className="space-y-4">
+        <Label className="text-lg font-semibold">Target Files</Label>
+        
+        <FileUpload
+          onFileSelect={handleTargetFilesSelect}
+          accept=".gltf,.glb"
+          label="Drop target GLTF files here"
+          multiple={true}
         />
-        {targetFiles.length > 0 && (
-          <div className="mt-2">
-            <p className="font-semibold">Selected files:</p>
-            <ul className="list-disc pl-5 text-sm">
-              {targetFiles.map((file, index) => (
-                <li key={index}>{file.name}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
 
-      <div className="space-y-4">
-          <div>
-            <Label htmlFor="outputDirectory">
-              Output Directory <span className="text-red-500">*</span>
-            </Label>
-            <div className="flex items-center space-x-2 mt-1">
-              <div className="flex-1 flex items-center gap-2 p-2 border rounded-md bg-muted">
-                <span className="truncate">
-                  {outputDirectoryName ? `Selected: ${outputDirectoryName}` : 'No directory selected'}
+        <FileList
+          files={targetFiles}
+          onRemoveFile={(index) => {
+            setTargetFiles(prev => prev.filter((_, i) => i !== index));
+            setFileErrors(prev => {
+              const newErrors = {...prev};
+              delete newErrors[targetFiles[index].name];
+              return newErrors;
+            });
+          }}
+          errors={fileErrors}
+          className="max-h-[300px]"
+        />
+
+        {targetFiles.length > 0 && (
+          <Button 
+            onClick={handleClearFiles} 
+            variant="outline" 
+            className="w-full"
+          >
+            Clear All Files
+          </Button>
+        )}
+      </section>
+
+      <Separator />
+
+      <section className="space-y-4">
+        <Label className="text-lg font-semibold">
+          Output Directory <span className="text-red-500">*</span>
+        </Label>
+        
+        <Card className="bg-gray-50 dark:bg-gray-900">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-4">
+              <div className="flex-1 flex items-center gap-2">
+                <FolderOpen className="h-5 w-5 text-gray-500" />
+                <span className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                  {outputDirectoryName ? outputDirectoryName : 'No directory selected'}
                 </span>
               </div>
               <Button 
                 onClick={handleOutputDirectorySelect}
                 variant="outline"
+                className="shrink-0"
               >
                 Select Directory
               </Button>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              Select a directory where files will be saved
-            </p>
-          </div>
-      </div>
-      <div className="flex space-x-4">
-        <div className="flex items-center space-x-2">
-          <Checkbox 
-            id="applyVariants" 
-            checked={applyVariants} 
-            onCheckedChange={(checked) => setApplyVariants(checked as boolean)}
-          />
-          <Label htmlFor="applyVariants">Apply Variants</Label>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Checkbox 
-            id="applyMoodRotation" 
-            checked={applyMoodRotation} 
-            onCheckedChange={(checked) => setApplyMoodRotation(checked as boolean)}
-          />
-          <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
-        </div>
-      </div>
+          </CardContent>
+        </Card>
+      </section>
 
-      {materialData && materialData.models && (
-        <div>
-          <Label htmlFor="modelSelect">Select Model:</Label>
-          <Select onValueChange={setSelectedModel} value={selectedModel}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a model" />
+      <Separator />
+
+      <section className="space-y-4">
+        <Label className="text-lg font-semibold flex items-center gap-2">
+          <Settings2 className="h-5 w-5" />
+          Processing Options
+        </Label>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="applyVariants" 
+              checked={applyVariants} 
+              onCheckedChange={(checked) => setApplyVariants(checked as boolean)}
+            />
+            <Label htmlFor="applyVariants">Apply Variants</Label>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="applyMoodRotation" 
+              checked={applyMoodRotation} 
+              onCheckedChange={(checked) => setApplyMoodRotation(checked as boolean)}
+            />
+            <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
+          </div>
+        </div>
+
+        {materialData && materialData.models && (
+          <div className="space-y-2">
+            <Label htmlFor="modelSelect">Model Type</Label>
+            <Select onValueChange={setSelectedModel} value={selectedModel}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.keys(materialData.models).map((model) => (
+                  <SelectItem key={model} value={model}>
+                    {model}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <Label>Processing Mode</Label>
+          <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select processing mode" />
             </SelectTrigger>
             <SelectContent>
-              {Object.keys(materialData.models).map((model) => (
-                <SelectItem key={model} value={model}>
-                  {model}
-                </SelectItem>
-              ))}
+              <SelectItem value="update">Update GLTF Files</SelectItem>
+              <SelectItem value="export">Export Individual Variants</SelectItem>
             </SelectContent>
           </Select>
         </div>
-      )}
 
-      <div className="flex space-x-4">
-        <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select processing mode" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="update">Update GLTF Files</SelectItem>
-            <SelectItem value="export">Export Individual Variants</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Button onClick={handleClearFiles} variant="outline" className="w-full">
-        Clear Target Files
-      </Button>
-
-      <ProgressDisplay
-        progress={progress}
-        currentChunk={currentChunk}
-        totalChunks={totalChunks}
-        currentlyProcessingFiles={currentlyProcessingFiles}
-        latestProcessedFile={latestProcessedFile}
-        isProcessing={isProcessing}
-      />
-
-      {targetFiles.length > 1 && (
-        <div>
-          <Label htmlFor="concurrentProcesses">Concurrent Processes:</Label>
-          <Select value={concurrentProcesses.toString()} onValueChange={(value) => setConcurrentProcesses(Number(value))}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select number of concurrent processes" />
-            </SelectTrigger>
-            {processingMode === 'update' ? (
+        {targetFiles.length > 1 && (
+          <div className="space-y-2">
+            <Label htmlFor="concurrentProcesses">Concurrent Processes</Label>
+            <Select 
+              value={concurrentProcesses.toString()} 
+              onValueChange={(value) => setConcurrentProcesses(Number(value))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select number of concurrent processes" />
+              </SelectTrigger>
               <SelectContent>
-                <SelectItem value="1">1</SelectItem>
-                <SelectItem value="2">2</SelectItem>
-                <SelectItem value="4">4</SelectItem>
-                <SelectItem value="8">8</SelectItem>
-                <SelectItem value="16">16</SelectItem>
-                <SelectItem value="32">32</SelectItem>
-                <SelectItem value="64">64</SelectItem>
-                <SelectItem value="128">128</SelectItem>
-                <SelectItem value="256">256</SelectItem>
+                {processingMode === 'update' ? (
+                  Array.from({length: 9}, (_, i) => Math.pow(2, i)).map(value => (
+                    <SelectItem key={value} value={value.toString()}>
+                      {value}
+                    </SelectItem>
+                  ))
+                ) : (
+                  [1, 2, 3, 5, 8, 12].map(value => (
+                    <SelectItem key={value} value={value.toString()}>
+                      {value}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
-            ) : (
-              <SelectContent>
-                <SelectItem value="1">1</SelectItem>
-                <SelectItem value="2">2</SelectItem>
-                <SelectItem value="3">3</SelectItem>
-                <SelectItem value="5">5</SelectItem>
-                <SelectItem value="8">8</SelectItem>
-                <SelectItem value="12">12</SelectItem>
-              </SelectContent>
-            )}
-          </Select>
-        </div>
+            </Select>
+          </div>
+        )}
+      </section>
+
+      {isProcessing && (
+        <ProgressDisplay
+          progress={progress}
+          currentChunk={currentChunk}
+          totalChunks={totalChunks}
+          currentlyProcessingFiles={currentlyProcessingFiles}
+          latestProcessedFile={latestProcessedFile}
+          isProcessing={isProcessing}
+        />
       )}
 
       <Button 
         onClick={processFiles} 
         disabled={buttonDisabled}
-        className="w-full"
+        className={`w-full ${isProcessing ? 'bg-blue-500' : ''}`}
       >
-        {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}
+        {isProcessing 
+          ? 'Processing...' 
+          : processingMode === 'update' 
+            ? 'Update GLTF Files' 
+            : 'Export Individual Variants'
+        }
       </Button>
 
       <PermissionDialog
@@ -559,4 +552,6 @@ export default function GltfUpdater({
       />
     </div>
   );
-}
+};
+
+export default GltfUpdater;

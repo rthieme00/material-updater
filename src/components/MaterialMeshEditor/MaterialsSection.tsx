@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import MaterialItem from './MaterialItem';
 import { Plus, ArrowUpDown } from 'lucide-react';
 import { Material } from '@/gltf/gltfTypes';
+import { Card } from "@/components/ui/card";
 
 interface MaterialsSectionProps {
   materials: Material[];
@@ -36,56 +37,58 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      <DragDropContext onDragEnd={onDragEnd}>
-        <Droppable droppableId="materials">
-          {(provided) => (
-            <ul 
-              {...provided.droppableProps} 
-              ref={provided.innerRef} 
-              className="space-y-2 min-h-[200px] border rounded-lg p-4"
-            >
-              {materials.map((material, index) => (
-                <Draggable key={material.name} draggableId={material.name} index={index}>
-                  {(provided) => (
-                    <MaterialItem
-                      material={material}
-                      index={index}
-                      totalItems={materials.length}
-                      onEditTags={onEditTags}
-                      onRenameMaterial={onRenameMaterial}
-                      onRemoveMaterial={onRemoveMaterial}
-                      onMoveMaterial={handleMoveMaterial}
-                      provided={provided}
-                    />
-                  )}
-                </Draggable>
-              ))}
-              {provided.placeholder}
-            </ul>
-          )}
-        </Droppable>
-      </DragDropContext>
+    <Card className="p-6 bg-gray-50 dark:bg-gray-900 border-none shadow-none">
+      <div className="space-y-6">
+        <DragDropContext onDragEnd={onDragEnd}>
+          <Droppable droppableId="materials">
+            {(provided) => (
+              <ul 
+                {...provided.droppableProps} 
+                ref={provided.innerRef} 
+                className="space-y-3 min-h-[200px]"
+              >
+                {materials.map((material, index) => (
+                  <Draggable key={material.name} draggableId={material.name} index={index}>
+                    {(provided) => (
+                      <MaterialItem
+                        material={material}
+                        index={index}
+                        totalItems={materials.length}
+                        onEditTags={onEditTags}
+                        onRenameMaterial={onRenameMaterial}
+                        onRemoveMaterial={onRemoveMaterial}
+                        onMoveMaterial={handleMoveMaterial}
+                        provided={provided}
+                      />
+                    )}
+                  </Draggable>
+                ))}
+                {provided.placeholder}
+              </ul>
+            )}
+          </Droppable>
+        </DragDropContext>
 
-      <div className="flex space-x-4">
-        <Button 
-          onClick={onAddMaterials}
-          variant="outline"
-          className="flex-1"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Materials
-        </Button>
-        <Button
-          onClick={onSortMaterials}
-          variant="outline"
-          className="flex-1"
-        >
-          <ArrowUpDown className="w-4 h-4 mr-2" />
-          Sort Materials
-        </Button>
+        <div className="flex gap-4">
+          <Button 
+            onClick={onAddMaterials}
+            variant="outline"
+            className="flex-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Materials
+          </Button>
+          <Button
+            onClick={onSortMaterials}
+            variant="outline"
+            className="flex-1 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900"
+          >
+            <ArrowUpDown className="w-4 h-4 mr-2" />
+            Sort Materials
+          </Button>
+        </div>
       </div>
-    </div>
+    </Card>
   );
 };
 
