@@ -1,6 +1,6 @@
 // src/components/GltfUpdater.tsx
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import ErrorDialog from './Dialogs/ErrorDialog';
 import { MaterialData, GltfData } from '@/gltf/gltfTypes';
 import { saveFileWithFallback } from '@/utils/fileHandling';
 import PermissionDialog from './Dialogs/PermissionDialog';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import * as THREE from 'three';
 
 declare global {
   interface Window {
@@ -70,6 +72,7 @@ export default function GltfUpdater({
   const [concurrentProcesses, setConcurrentProcesses] = useState(1);
   const [currentlyProcessingFiles, setCurrentlyProcessingFiles] = useState<string[]>([]);
   const [latestProcessedFile, setLatestProcessedFile] = useState<string | null>(null);
+  const [exportGlb, setExportGlb] = useState(false);
 
   const referenceFileInputRef = useRef<HTMLInputElement>(null);
   const targetFilesInputRef = useRef<HTMLInputElement>(null);
@@ -77,6 +80,17 @@ export default function GltfUpdater({
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [hasFileSystemPermission, setHasFileSystemPermission] = useState(false);
+
+  useEffect(() => {
+    const loader = new DRACOLoader();
+    loader.setDecoderPath('/draco/gltf/');
+    loader.preload();
+    setDracoLoader(loader);
+
+    return () => {
+      loader.dispose();
+    };
+  }, []); 
 
   const handleReferenceFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -121,9 +135,14 @@ export default function GltfUpdater({
       const handle = await window.showDirectoryPicker();
       setOutputDirectory(handle);
       setOutputDirectoryName(handle.name);
+      directoryHandleRef.current = handle;
       setIsPermissionDialogOpen(true);
       setFeedback('Output directory selected successfully.');
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // User cancelled the selection
+        return;
+      }
       console.error('Error selecting output directory:', error);
       setErrorMessage('Failed to select output directory. Please try again.');
       setIsErrorDialogOpen(true);
@@ -170,8 +189,21 @@ export default function GltfUpdater({
     }
   };
 
+  const [dracoLoader, setDracoLoader] = useState<DRACOLoader | null>(null);
+
+  useEffect(() => {
+    const loader = new DRACOLoader();
+    loader.setDecoderPath('/draco/gltf/');
+    loader.preload();
+    setDracoLoader(loader);
+
+    return () => {
+      loader.dispose();
+    };
+  }, []);
+
   const processFiles = useCallback(async () => {
-    if (!referenceFile || targetFiles.length === 0 || !materialData) {
+    if (!referenceFile || targetFiles.length === 0 || !materialData || !outputDirectory) {
       setErrorMessage('Please select reference file, target files, ensure material data is loaded, and select an output directory.');
       setIsErrorDialogOpen(true);
       return;
@@ -211,11 +243,11 @@ export default function GltfUpdater({
               completedFiles++;
               try {
                 if (processingMode === 'update') {
-                  await saveFileWithFallback(file.name, e.data.result, hasFileSystemPermission ? directoryHandleRef.current : null);
+                  await saveFileWithFallback(file.name, e.data.result, outputDirectory);
                   setLatestProcessedFile(file.name);
                 } else if (processingMode === 'export') {
                   for (const variant of e.data.result.exportedVariants) {
-                    await saveFileWithFallback(variant.fileName, variant.content, hasFileSystemPermission ? directoryHandleRef.current : null);
+                    await saveFileWithFallback(variant.fileName, variant.content, outputDirectory);
                     setLatestProcessedFile(variant.fileName);
                   }
                 }
@@ -244,7 +276,7 @@ export default function GltfUpdater({
             fileName: file.name,
             refFileName: referenceFileName,
             targetFileName: file.name
-          }, []);
+          });
         });
       };
 
@@ -262,7 +294,7 @@ export default function GltfUpdater({
 
       workerPool.forEach(worker => worker.terminate());
 
-      setFeedback(`All files ${processingMode === 'update' ? 'updated' : 'exported'} and ${hasFileSystemPermission ? 'saved to selected directory' : 'downloaded'}.`);
+      setFeedback('All files processed and saved to output directory.');
     } catch (error) {
       console.error('Error processing materials:', error);
       setErrorMessage(`Error processing materials: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -274,13 +306,29 @@ export default function GltfUpdater({
       setLatestProcessedFile(null);
       directoryHandleRef.current = null;
     }
-  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses, hasFileSystemPermission]);
+  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses]);
 
   const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
       referenceFileInputRef.current.click();
     }
   };
+
+  const buttonDisabled = (!referenceFile && !isReferenceFileStored) || 
+    targetFiles.length === 0 || 
+    !materialData || 
+    isProcessing || 
+    !outputDirectory;
+
+  console.log('Button state:', {
+    hasReferenceFile: !!referenceFile,
+    isReferenceFileStored,
+    targetFilesCount: targetFiles.length,
+    hasMaterialData: !!materialData,
+    isProcessing,
+    hasOutputDirectory: !!outputDirectory,
+    isDisabled: buttonDisabled
+  });
 
   return (
     <div className="space-y-6">
@@ -351,6 +399,29 @@ export default function GltfUpdater({
         )}
       </div>
 
+      <div className="space-y-4">
+          <div>
+            <Label htmlFor="outputDirectory">
+              Output Directory <span className="text-red-500">*</span>
+            </Label>
+            <div className="flex items-center space-x-2 mt-1">
+              <div className="flex-1 flex items-center gap-2 p-2 border rounded-md bg-muted">
+                <span className="truncate">
+                  {outputDirectoryName ? `Selected: ${outputDirectoryName}` : 'No directory selected'}
+                </span>
+              </div>
+              <Button 
+                onClick={handleOutputDirectorySelect}
+                variant="outline"
+              >
+                Select Directory
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              Select a directory where files will be saved
+            </p>
+          </div>
+      </div>
       <div className="flex space-x-4">
         <div className="flex items-center space-x-2">
           <Checkbox 
@@ -415,45 +486,25 @@ export default function GltfUpdater({
 
       {targetFiles.length > 1 && (
         <div>
-          <div>
-            <Label htmlFor="outputDirectory">Output Directory:</Label>
-            <div className="flex items-center space-x-2">
-              <Input 
-                id="outputDirectory" 
-                type="text" 
-                readOnly 
-                value={outputDirectoryName || ''} 
-                placeholder="Select output directory"
-                className="mt-1 flex-grow" 
-              />
-              <Button 
-                onClick={handleOutputDirectorySelect}
-                variant="outline"
-              >
-                Select Directory
-              </Button>
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="concurrentProcesses">Concurrent Processes:</Label>
-            <Select value={concurrentProcesses.toString()} onValueChange={(value) => setConcurrentProcesses(Number(value))}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select number of concurrent processes" />
-              </SelectTrigger>
-              {processingMode === 'update' ? (
-                <SelectContent>
-                  <SelectItem value="1">1</SelectItem>
-                  <SelectItem value="2">2</SelectItem>
-                  <SelectItem value="4">4</SelectItem>
-                  <SelectItem value="8">8</SelectItem>
-                  <SelectItem value="16">16</SelectItem>
-                  <SelectItem value="32">32</SelectItem>
-                  <SelectItem value="64">64</SelectItem>
-                  <SelectItem value="128">128</SelectItem>
-                  <SelectItem value="256">256</SelectItem>
-                </SelectContent>
-              ) : (
-                <SelectContent>
+          <Label htmlFor="concurrentProcesses">Concurrent Processes:</Label>
+          <Select value={concurrentProcesses.toString()} onValueChange={(value) => setConcurrentProcesses(Number(value))}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select number of concurrent processes" />
+            </SelectTrigger>
+            {processingMode === 'update' ? (
+              <SelectContent>
+                <SelectItem value="1">1</SelectItem>
+                <SelectItem value="2">2</SelectItem>
+                <SelectItem value="4">4</SelectItem>
+                <SelectItem value="8">8</SelectItem>
+                <SelectItem value="16">16</SelectItem>
+                <SelectItem value="32">32</SelectItem>
+                <SelectItem value="64">64</SelectItem>
+                <SelectItem value="128">128</SelectItem>
+                <SelectItem value="256">256</SelectItem>
+              </SelectContent>
+            ) : (
+              <SelectContent>
                 <SelectItem value="1">1</SelectItem>
                 <SelectItem value="2">2</SelectItem>
                 <SelectItem value="3">3</SelectItem>
@@ -461,15 +512,14 @@ export default function GltfUpdater({
                 <SelectItem value="8">8</SelectItem>
                 <SelectItem value="12">12</SelectItem>
               </SelectContent>
-              )}
-            </Select>
-          </div>
+            )}
+          </Select>
         </div>
       )}
 
       <Button 
         onClick={processFiles} 
-        disabled={(!referenceFile && !isReferenceFileStored) || targetFiles.length === 0 || !materialData || isProcessing || (targetFiles.length > 1 && !outputDirectory)} 
+        disabled={buttonDisabled}
         className="w-full"
       >
         {isProcessing ? 'Processing...' : processingMode === 'update' ? 'Update GLTF Files' : 'Export Individual Variants'}

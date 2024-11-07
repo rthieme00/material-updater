@@ -1,7 +1,7 @@
 // src/components/Dialogs/InputDialog.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -10,10 +10,20 @@ interface InputDialogProps {
   onClose: () => void;
   onSubmit: (value: string) => void;
   title: string;
+  description?: string;
   initialValue?: string;
+  placeholder?: string;
 }
 
-const InputDialog: React.FC<InputDialogProps> = ({ isOpen, onClose, onSubmit, title, initialValue = '' }) => {
+const InputDialog: React.FC<InputDialogProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSubmit, 
+  title, 
+  description,
+  initialValue = '',
+  placeholder = 'Enter value'
+}) => {
   const [inputValue, setInputValue] = useState(initialValue);
 
   useEffect(() => {
@@ -21,8 +31,10 @@ const InputDialog: React.FC<InputDialogProps> = ({ isOpen, onClose, onSubmit, ti
   }, [initialValue, isOpen]);
 
   const handleSubmit = () => {
-    onSubmit(inputValue);
-    onClose();
+    if (inputValue.trim()) {
+      onSubmit(inputValue);
+      onClose();
+    }
   };
 
   return (
@@ -30,11 +42,18 @@ const InputDialog: React.FC<InputDialogProps> = ({ isOpen, onClose, onSubmit, ti
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <Input
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder="Enter value"
+          placeholder={placeholder}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
         />
         <DialogFooter>
           <Button onClick={onClose} variant="outline">Cancel</Button>

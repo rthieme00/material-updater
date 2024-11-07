@@ -1,12 +1,15 @@
 // src/components/MaterialMeshEditor/MeshItem.tsx
 
-import React from 'react';
-import { ChevronDown, ChevronRight, X, Zap } from 'lucide-react';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronRight, X, Zap, ChevronUp } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+import SearchableSelect from '@/components/ui/searchable-select';
 
 interface MeshItemProps {
   meshName: string;
@@ -40,6 +43,8 @@ const MeshItem: React.FC<MeshItemProps> = ({
   onRemoveVariant,
   onAddVariant
 }) => {
+  const [expandedVariants, setExpandedVariants] = useState<boolean>(false);
+
   return (
     <Card className="mb-4">
       <CardHeader className="flex flex-row items-center justify-between py-2">
@@ -73,73 +78,77 @@ const MeshItem: React.FC<MeshItemProps> = ({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1">Default Material:</label>
-              <Select
-                value={assignment.defaultMaterial || undefined}
+              <SearchableSelect
+                value={assignment.defaultMaterial}
                 onValueChange={(value) => onAssignmentChange(meshName, "defaultMaterial", value)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a material" />
-                </SelectTrigger>
-                <SelectContent>
-                  {materials.map(material => (
-                    <SelectItem key={material.name} value={material.name}>{material.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={materials}
+                placeholder="Select a material"
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Variant Materials:</label>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Variant Name</TableHead>
-                    <TableHead>Material</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {assignment.variants.map((variant, index) => (
-                    <TableRow key={index}>
-                      <TableCell>
-                        <Input
-                          value={variant.name}
-                          onChange={(e) => onVariantChange(meshName, index, "name", e.target.value)}
-                          placeholder="Variant name"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={variant.material || undefined}
-                          onValueChange={(value) => onVariantChange(meshName, index, "material", value)}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select a material" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {materials.map(material => (
-                              <SelectItem key={material.name} value={material.name}>{material.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          onClick={() => onRemoveVariant(meshName, index)}
-                          variant="ghost"
-                          size="sm"
-                        >
-                          <X size={16} />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium">Variant Materials:</label>
+                <Button
+                  onClick={() => setExpandedVariants(!expandedVariants)}
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                >
+                  {expandedVariants ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </Button>
+              </div>
+
+              {expandedVariants && (
+                <ScrollArea className="h-[300px] border rounded-md p-2">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Variant Name</TableHead>
+                        <TableHead>Material</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {assignment.variants.map((variant, index) => (
+                        <TableRow key={index}>
+                          <TableCell>
+                            <Input
+                              value={variant.name}
+                              onChange={(e) => onVariantChange(meshName, index, "name", e.target.value)}
+                              placeholder="Variant name"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <SearchableSelect
+                              value={variant.material}
+                              onValueChange={(value) => onVariantChange(meshName, index, "material", value)}
+                              options={materials}
+                              placeholder="Select a material"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              onClick={() => onRemoveVariant(meshName, index)}
+                              variant="ghost"
+                              size="sm"
+                              className="hover:text-destructive"
+                            >
+                              <X size={16} />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              )}
+
               <Button
                 onClick={() => onAddVariant(meshName)}
                 variant="outline"
                 size="sm"
-                className="mt-2"
+                className="w-full mt-2"
               >
                 Add Variant
               </Button>

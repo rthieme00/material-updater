@@ -100,36 +100,73 @@ export async function updateMaterials(
 
     progressCallback(0.2);
 
-    // Find AO image in target data
+    // Find AO image and texture indices
     const targetAOImageIndex = findAOImageIndex(targetData.images);
+    const refAOImageIndex = findAOImageIndex(referenceData.images);
+    const refAOTextureIndex = findAOTextureIndex(referenceData.textures);
+
     if (targetAOImageIndex === -1) {
       throw new Error(`No AO image found in target data file: ${targetFileName}`);
     }
-    const targetAOImage = targetData.images[targetAOImageIndex];
-
-    // Find AO image and texture in reference data
-    const refAOImageIndex = findAOImageIndex(referenceData.images);
-    const refAOTextureIndex = findAOTextureIndex(referenceData.textures);
     if (refAOImageIndex === -1 || refAOTextureIndex === -1) {
-      throw new Error(`No AO texture found in reference data file: ${refFileName}`);
-    }
-    if (refAOTextureIndex === -1) {
       throw new Error(`No AO texture found in reference data file: ${refFileName}`);
     }
 
     progressCallback(0.4);
 
     // Replace AO image in reference data
+    const targetAOImage = targetData.images[targetAOImageIndex];
     referenceData.images[refAOImageIndex] = targetAOImage;
-
-    // Ensure AO texture points to the correct image
     referenceData.textures[refAOTextureIndex].source = refAOImageIndex;
 
-    // Update materials, textures, and images from reference data
-    targetData.materials = referenceData.materials;
+    // Create a map of material names to their indices in the reference data
+    const refMaterialMap = new Map(
+      referenceData.materials.map((material, index) => [material.name, { material, index }])
+    );
+
+    // Create new materials array based on the order in materialData
+    const orderedMaterials: GltfMaterial[] = [];
+    const newMaterialIndices = new Map<number, number>(); // Map old indices to new indices
+
+    // Add materials in the order they appear in materialData
+    materialData.materials.forEach((jsonMaterial, newIndex) => {
+      const refMaterial = refMaterialMap.get(jsonMaterial.name);
+      if (refMaterial) {
+        orderedMaterials.push(refMaterial.material);
+        newMaterialIndices.set(refMaterial.index, newIndex);
+      }
+    });
+
+    // Add any remaining materials that weren't in the JSON
+    referenceData.materials.forEach((material, oldIndex) => {
+      if (!orderedMaterials.some(m => m.name === material.name)) {
+        newMaterialIndices.set(oldIndex, orderedMaterials.length);
+        orderedMaterials.push(material);
+      }
+    });
+
+    // Update material indices in meshes
+    targetData.meshes.forEach(mesh => {
+      mesh.primitives.forEach(primitive => {
+        if (primitive.material !== undefined) {
+          const oldIndex = primitive.material;
+          primitive.material = newMaterialIndices.get(oldIndex) ?? oldIndex;
+        }
+
+        // Update material indices in variants
+        if (primitive.extensions?.KHR_materials_variants?.mappings) {
+          primitive.extensions.KHR_materials_variants.mappings.forEach(mapping => {
+            const oldIndex = mapping.material;
+            mapping.material = newMaterialIndices.get(oldIndex) ?? oldIndex;
+          });
+        }
+      });
+    });
+
+    // Assign the reordered materials
+    targetData.materials = orderedMaterials;
     targetData.textures = referenceData.textures;
     targetData.images = referenceData.images;
-
     targetData.samplers = targetData.samplers || [];
 
     progressCallback(0.6);

@@ -2,9 +2,8 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import FileUpload from '@/components/FileUpload/FileUpload';
 import MaterialMeshEditor from '@/components/MaterialMeshEditor/MaterialMeshEditor';
@@ -24,8 +23,8 @@ export default function Home() {
   const [referenceMaterials, setReferenceMaterials] = useState<string[]>([]);
   const [referenceMeshes, setReferenceMeshes] = useState<string[]>([]);
 
+  // Load material data from localStorage
   useEffect(() => {
-    // Load material data from localStorage
     const storedMaterialData = localStorage.getItem('materialData');
     if (storedMaterialData) {
       try {
@@ -41,13 +40,15 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
-    // Save material data to localStorage whenever it changes
-    if (materialData) {
-      localStorage.setItem('materialData', JSON.stringify(materialData));
-      localStorage.setItem('materialFileName', materialFileName || '');
+  // Create a callback for handling material data updates
+  const handleMaterialDataUpdate = useCallback((updatedData: MaterialData) => {
+    setMaterialData(updatedData);
+    localStorage.setItem('materialData', JSON.stringify(updatedData));
+    if (materialFileName) {
+      localStorage.setItem('materialFileName', materialFileName);
     }
-  }, [materialData, materialFileName]);
+    setFeedback('Material data updated');
+  }, [materialFileName]);
 
   const handleFileUpload = (file: File) => {
     const reader = new FileReader();
@@ -57,11 +58,12 @@ export default function Home() {
         const parsedData = JSON.parse(content) as MaterialData;
         setMaterialData(parsedData);
         setMaterialFileName(file.name);
+        localStorage.setItem('materialData', content);
+        localStorage.setItem('materialFileName', file.name);
         setFeedback(`Successfully loaded ${file.name}`);
 
         if (parsedData.materials && Array.isArray(parsedData.materials)) {
-          const materialNames = parsedData.materials.map(m => m.name);
-          setReferenceMaterials(materialNames);
+          setReferenceMaterials(parsedData.materials.map(m => m.name));
         }
       } catch (error) {
         setFeedback(`Error parsing file: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -73,27 +75,19 @@ export default function Home() {
     reader.readAsText(file);
   };
 
-  const handleSave = (updatedData: MaterialData) => {
-    setMaterialData(updatedData);
+  const handleSave = useCallback((updatedData: MaterialData) => {
+    handleMaterialDataUpdate(updatedData);
+    
+    // Create and trigger download of the JSON file
     const blob = new Blob([JSON.stringify(updatedData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'updated_materials.json';
+    a.download = materialFileName || 'updated_materials.json';
     a.click();
     URL.revokeObjectURL(url);
-    setFeedback('Materials.json saved successfully');
+  }, [materialFileName, handleMaterialDataUpdate]);
 
-    if (updatedData.materials && Array.isArray(updatedData.materials)) {
-      const materialNames = updatedData.materials.map(m => m.name);
-      setReferenceMaterials(materialNames);
-    }
-  };
-
-  const handleUpdate = (updatedData: MaterialData) => {
-    setMaterialData(updatedData);
-    setFeedback('Material data updated');
-  };
 
   const handleClear = () => {
     setMaterialData(null);
@@ -101,11 +95,6 @@ export default function Home() {
     setFeedback('All data cleared');
     localStorage.removeItem('materialData');
     localStorage.removeItem('materialFileName');
-  };
-
-  const updateMaterialData = (updatedData: MaterialData) => {
-    setMaterialData(updatedData);
-    setFeedback('Material data updated');
   };
 
   return (
@@ -136,7 +125,7 @@ export default function Home() {
                   setReferenceMeshes={setReferenceMeshes}
                   openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
                   openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
-                  updateMaterialData={updateMaterialData}
+                  updateMaterialData={handleMaterialDataUpdate}
                 />
               )}
             </CardContent>
@@ -158,31 +147,34 @@ export default function Home() {
                 <CardTitle>Edit Materials</CardTitle>
               </CardHeader>
               <CardContent>
-                <MaterialMeshEditor data={materialData} onSave={handleSave} />
-                <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
-                  Clear All Data
-                </Button>
+                <MaterialMeshEditor 
+                  data={materialData} 
+                  onSave={handleSave}
+                  onUpdate={handleMaterialDataUpdate} // Add this new prop
+                />
               </CardContent>
             </Card>
           )}
         </div>
       </div>
+
       <ReferenceMaterialsModal 
         isOpen={isReferenceMaterialsModalOpen}
         onClose={() => setIsReferenceMaterialsModalOpen(false)}
-        materials={referenceMaterials}
+        currentMaterials={materialData?.materials || []}
+        referenceMaterials={referenceMaterials}
         onApply={(updatedMaterials) => {
           if (materialData) {
             const updatedData = {
               ...materialData,
               materials: updatedMaterials
             };
-            setMaterialData(updatedData);
-            setReferenceMaterials(updatedMaterials.map(m => m.name));
+            handleMaterialDataUpdate(updatedData);
           }
           setIsReferenceMaterialsModalOpen(false);
         }}
       />
+
       <ReferenceMeshesModal 
         isOpen={isReferenceMeshesModalOpen}
         onClose={() => setIsReferenceMeshesModalOpen(false)}
@@ -196,8 +188,7 @@ export default function Home() {
                 ...updatedMeshAssignments
               }
             };
-            setMaterialData(updatedData);
-            setReferenceMeshes(updatedMeshes.map(m => m.name));
+            handleMaterialDataUpdate(updatedData);
           }
           setIsReferenceMeshesModalOpen(false);
         }}
