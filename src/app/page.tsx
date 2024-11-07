@@ -13,6 +13,7 @@ import ReferenceMeshesModal from '@/components/Modals/ReferenceMeshesModal';
 import { MaterialData } from '@/gltf/gltfTypes';
 import { usePersistentFile } from '@/hooks/usePersistentFile';
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function Home() {
   const [materialData, setMaterialData] = useState<MaterialData | null>(null);
@@ -41,7 +42,6 @@ export default function Home() {
     }
   }, []);
 
-  // Create a callback for handling material data updates
   const handleMaterialDataUpdate = useCallback((updatedData: MaterialData) => {
     setMaterialData(updatedData);
     localStorage.setItem('materialData', JSON.stringify(updatedData));
@@ -79,7 +79,6 @@ export default function Home() {
   const handleSave = useCallback((updatedData: MaterialData) => {
     handleMaterialDataUpdate(updatedData);
     
-    // Create and trigger download of the JSON file
     const blob = new Blob([JSON.stringify(updatedData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -88,7 +87,6 @@ export default function Home() {
     a.click();
     URL.revokeObjectURL(url);
   }, [materialFileName, handleMaterialDataUpdate]);
-
 
   const handleClear = () => {
     setMaterialData(null);
@@ -99,67 +97,69 @@ export default function Home() {
   };
 
   return (
-    <div className="container mx-auto p-4 space-y-6">
-      {feedback && (
-        <Alert variant="default">
-          <AlertDescription>{feedback}</AlertDescription>
-        </Alert>
-      )}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-6">
+    <div className="h-screen flex overflow-hidden">
+      {/* Fixed left section - now 1/3 width */}
+      <div className="w-1/3 h-screen overflow-y-auto border-r p-4 bg-background">
+        {feedback && (
+          <Alert variant="default" className="mb-6">
+            <AlertDescription>{feedback}</AlertDescription>
+          </Alert>
+        )}
+        
+        <Card>
+          <CardHeader>
+            <CardTitle>Update GLTF Files</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {materialData && (
+              <GltfUpdater 
+                materialData={materialData} 
+                referenceFile={referenceFileState.file}
+                setReferenceFile={setReferenceFile}
+                referenceFileName={referenceFileState.fileName}
+                referenceFilePath={referenceFileState.filePath}
+                isReferenceFileStored={referenceFileState.isStored}
+                clearReferenceFile={clearReferenceFile}
+                setFeedback={setFeedback}
+                setReferenceMaterials={setReferenceMaterials}
+                setReferenceMeshes={setReferenceMeshes}
+                openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
+                openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
+                updateMaterialData={handleMaterialDataUpdate}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Scrollable right section - now 2/3 width */}
+      <div className="w-2/3 h-screen overflow-y-auto p-4">
+        {!materialData ? (
           <Card>
             <CardHeader>
-              <CardTitle>Update GLTF Files</CardTitle>
+              <CardTitle>Upload Materials.json</CardTitle>
             </CardHeader>
             <CardContent>
-              {materialData && (
-                <GltfUpdater 
-                  materialData={materialData} 
-                  referenceFile={referenceFileState.file}
-                  setReferenceFile={setReferenceFile}
-                  referenceFileName={referenceFileState.fileName}
-                  referenceFilePath={referenceFileState.filePath}
-                  isReferenceFileStored={referenceFileState.isStored}
-                  clearReferenceFile={clearReferenceFile}
-                  setFeedback={setFeedback}
-                  setReferenceMaterials={setReferenceMaterials}
-                  setReferenceMeshes={setReferenceMeshes}
-                  openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
-                  openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
-                  updateMaterialData={handleMaterialDataUpdate}
-                />
-              )}
+              <FileUpload onFileSelect={handleFileUpload} accept=".json" />
             </CardContent>
           </Card>
-        </div>
-        <div className="space-y-6">
-          {!materialData ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Upload Materials.json</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <FileUpload onFileSelect={handleFileUpload} accept=".json" />
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>Edit Materials</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <MaterialMeshEditor 
-                  data={materialData} 
-                  onSave={handleSave}
-                  onUpdate={handleMaterialDataUpdate} // Add this new prop
-                />
-                <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
-                  Clear All Data
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Edit Materials</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <MaterialMeshEditor 
+                data={materialData} 
+                onSave={handleSave}
+                onUpdate={handleMaterialDataUpdate}
+              />
+              <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
+                Clear All Data
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <ReferenceMaterialsModal 

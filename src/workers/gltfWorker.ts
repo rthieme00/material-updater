@@ -18,6 +18,10 @@ self.onmessage = async (e: MessageEvent) => {
   } = e.data;
 
   try {
+    const reportProgress = (progress: number) => {
+      self.postMessage({ type: 'progress', progress });
+    };
+
     let result;
     if (processingMode === 'update') {
       result = await updateMaterials(
@@ -29,7 +33,7 @@ self.onmessage = async (e: MessageEvent) => {
         materialData,
         refFileName,
         targetFileName,
-        (progress) => self.postMessage({ type: 'progress', progress })
+        reportProgress
       );
     } else if (processingMode === 'export') {
       result = await exportIndividualVariants(
@@ -38,9 +42,10 @@ self.onmessage = async (e: MessageEvent) => {
         model,
         applyMoodRotation,
         materialData,
-        (progress) => self.postMessage({ type: 'progress', progress })
+        reportProgress
       );
     }
+    
     self.postMessage({ type: 'complete', result });
   } catch (error) {
     self.postMessage({ 

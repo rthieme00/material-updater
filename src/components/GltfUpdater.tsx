@@ -208,94 +208,96 @@ export default function GltfUpdater({
       setIsErrorDialogOpen(true);
       return;
     }
-
+  
     try {
       const referenceContent = await referenceFile.text();
       const referenceData = JSON.parse(referenceContent) as GltfData;
-
+  
       setFeedback('Processing files...');
       setProgress(0);
       setIsProcessing(true);
       setLatestProcessedFile(null);
-
+  
       directoryHandleRef.current = outputDirectory;
-
+  
       const workerPool = new Array(concurrentProcesses).fill(null).map(() => 
         new Worker(new URL('../workers/gltfWorker.ts', import.meta.url))
       );
-
+  
       let completedFiles = 0;
       const totalFiles = targetFiles.length;
-
+  
       const processFile = async (file: File, workerIndex: number) => {
-        setCurrentlyProcessingFiles(prev => [...prev, file.name]);
         const worker = workerPool[workerIndex];
-        const content = await file.text();
-        const jsonData = JSON.parse(content) as GltfData;
-
-        return new Promise((resolve, reject) => {
-          worker.onmessage = async (e: MessageEvent) => {
-            if (e.data.type === 'progress') {
-              const fileProgress = e.data.progress;
-              const overallProgress = (completedFiles + fileProgress) / totalFiles * 100;
-              setProgress(overallProgress);
-            } else if (e.data.type === 'complete') {
-              completedFiles++;
+        setCurrentlyProcessingFiles(prev => [...prev, file.name]);
+        
+        try {
+          const content = await file.text();
+          const jsonData = JSON.parse(content) as GltfData;
+  
+          return new Promise((resolve, reject) => {
+            worker.onmessage = async (e: MessageEvent) => {
               try {
-                if (processingMode === 'update') {
-                  await saveFileWithFallback(file.name, e.data.result, outputDirectory);
-                  setLatestProcessedFile(file.name);
-                } else if (processingMode === 'export') {
-                  for (const variant of e.data.result.exportedVariants) {
-                    await saveFileWithFallback(variant.fileName, variant.content, outputDirectory);
-                    setLatestProcessedFile(variant.fileName);
+                if (e.data.type === 'progress') {
+                  const fileProgress = e.data.progress;
+                  const overallProgress = (completedFiles + fileProgress) / totalFiles * 100;
+                  setProgress(overallProgress);
+                } else if (e.data.type === 'complete') {
+                  completedFiles++;
+                  if (processingMode === 'update') {
+                    await saveFileWithFallback(file.name, e.data.result, outputDirectory);
+                    setLatestProcessedFile(file.name);
+                  } else if (processingMode === 'export') {
+                    for (const variant of e.data.result.exportedVariants) {
+                      await saveFileWithFallback(variant.fileName, variant.content, outputDirectory);
+                      setLatestProcessedFile(variant.fileName);
+                    }
                   }
+                  setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
+                  resolve(null);
+                } else if (e.data.type === 'error') {
+                  reject(new Error(e.data.error));
                 }
-                setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
-                resolve(null);
               } catch (error) {
-                console.error('Error saving file:', error);
-                setErrorMessage(`Error saving file: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                setIsErrorDialogOpen(true);
                 reject(error);
               }
-            } else if (e.data.type === 'error') {
-              setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
-              reject(new Error(e.data.error));
-            }
-          };
-
-          worker.postMessage({
-            referenceData,
-            targetData: jsonData,
-            model: selectedModel,
-            applyVariants,
-            applyMoodRotation,
-            materialData,
-            processingMode,
-            fileName: file.name,
-            refFileName: referenceFileName,
-            targetFileName: file.name,
-            referenceFileName,  // Added
-            setFeedback  
+            };
+  
+            // Send only serializable data to the worker
+            const messageData = {
+              referenceData,
+              targetData: jsonData,
+              model: selectedModel,
+              applyVariants,
+              applyMoodRotation,
+              materialData,
+              processingMode,
+              fileName: file.name,
+              refFileName: referenceFileName,
+              targetFileName: file.name
+            };
+  
+            worker.postMessage(messageData);
           });
-        });
+        } catch (error) {
+          setCurrentlyProcessingFiles(prev => prev.filter(f => f !== file.name));
+          throw error;
+        }
       };
-
+  
       const chunks = [];
       for (let i = 0; i < targetFiles.length; i += concurrentProcesses) {
         chunks.push(targetFiles.slice(i, i + concurrentProcesses));
       }
       setTotalChunks(chunks.length);
-
+  
       for (let i = 0; i < chunks.length; i++) {
         setCurrentChunk(i + 1);
         await Promise.all(chunks[i].map((file, index) => processFile(file, index)));
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-
+  
       workerPool.forEach(worker => worker.terminate());
-
       setFeedback('All files processed and saved to output directory.');
     } catch (error) {
       console.error('Error processing materials:', error);
@@ -308,8 +310,19 @@ export default function GltfUpdater({
       setLatestProcessedFile(null);
       directoryHandleRef.current = null;
     }
-  }, [referenceFile, targetFiles, materialData, processingMode, selectedModel, applyVariants, applyMoodRotation, outputDirectory, concurrentProcesses, referenceFileName]);
-
+  }, [
+    referenceFile,
+    targetFiles,
+    materialData,
+    processingMode,
+    selectedModel,
+    applyVariants,
+    applyMoodRotation,
+    outputDirectory,
+    concurrentProcesses,
+    referenceFileName,
+    setFeedback
+  ]);
   const handleReselectFile = () => {
     if (referenceFileInputRef.current) {
       referenceFileInputRef.current.click();
