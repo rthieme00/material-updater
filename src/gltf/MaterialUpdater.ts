@@ -253,7 +253,7 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
           const variantIndex = variantNameToIndex.get(variant.name);
 
           if (materialIndex !== undefined && variantIndex !== undefined) {
-            primitive.extensions.KHR_materials_variants.mappings.push({
+            primitive.extensions!.KHR_materials_variants!.mappings.push({
               material: materialIndex,
               variants: [variantIndex]
             });
@@ -280,7 +280,7 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
   // Remove the global KHR_materials_variants extension if no meshes have variants
   const hasVariants = targetData.meshes.some(mesh => 
     mesh.primitives.some(primitive => 
-      primitive.extensions?.KHR_materials_variants?.mappings?.length > 0
+      primitive.extensions?.KHR_materials_variants?.mappings?.length ?? 0 > 0
     )
   );
 
