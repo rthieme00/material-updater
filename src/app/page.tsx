@@ -12,6 +12,7 @@ import ReferenceMaterialsModal from '@/components/Modals/ReferenceMaterialsModal
 import ReferenceMeshesModal from '@/components/Modals/ReferenceMeshesModal';
 import { MaterialData } from '@/gltf/gltfTypes';
 import { usePersistentFile } from '@/hooks/usePersistentFile';
+import { Button } from '@/components/ui/button';
 
 export default function Home() {
   const [materialData, setMaterialData] = useState<MaterialData | null>(null);
@@ -152,6 +153,9 @@ export default function Home() {
                   onSave={handleSave}
                   onUpdate={handleMaterialDataUpdate} // Add this new prop
                 />
+                <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
+                  Clear All Data
+                </Button>
               </CardContent>
             </Card>
           )}
