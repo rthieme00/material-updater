@@ -192,8 +192,40 @@ function getOrderedVariants(meshAssignments: { [key: string]: MeshAssignment }):
   return sortedVariants;
 }
 
-// Modify the applyVariants function
+// Add new validation helper
+function validateMeshAssignment(
+  meshName: string,
+  assignment: MeshAssignment,
+  materials: GltfMaterial[],
+  variants: Array<{ name: string }>
+): boolean {
+  const materialNames = new Set(materials.map(m => m.name));
+  const variantNames = new Set(variants.map(v => v.name));
+  
+  // Check default material
+  if (assignment.defaultMaterial && !materialNames.has(assignment.defaultMaterial)) {
+    console.warn(`Invalid default material "${assignment.defaultMaterial}" for mesh "${meshName}"`);
+    return false;
+  }
+
+  // Check variants
+  for (const variant of assignment.variants) {
+    if (!materialNames.has(variant.material)) {
+      console.warn(`Invalid variant material "${variant.material}" for mesh "${meshName}"`);
+      return false;
+    }
+    if (!variantNames.has(variant.name)) {
+      console.warn(`Invalid variant name "${variant.name}" for mesh "${meshName}"`);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function applyVariants(targetData: GltfData, materialData: MaterialData) {
+  console.log('Starting variant application...');
+  
   if (!targetData.extensions) targetData.extensions = {};
   if (!targetData.extensions.KHR_materials_variants) {
     targetData.extensions.KHR_materials_variants = { variants: [] };
@@ -201,17 +233,31 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
 
   // Get ordered variants
   const orderedVariants = getOrderedVariants(materialData.meshAssignments);
+  console.log('Ordered variants:', orderedVariants);
   
-  // Clear existing variants and add them in the correct order
-  targetData.extensions.KHR_materials_variants.variants = 
-    orderedVariants.map(name => ({ name }));
+  // Only add variants extension if we actually have variants
+  if (orderedVariants.length > 0) {
+    targetData.extensions.KHR_materials_variants.variants = 
+      orderedVariants.map(name => ({ name }));
+
+    // Make sure extensionsUsed includes variants extension
+    if (!targetData.extensionsUsed) {
+      targetData.extensionsUsed = [];
+    }
+    if (!targetData.extensionsUsed.includes('KHR_materials_variants')) {
+      targetData.extensionsUsed.push('KHR_materials_variants');
+    }
+  } else {
+    // Remove variants extension if no variants exist
+    delete targetData.extensions.KHR_materials_variants;
+  }
 
   // Create material name to index mapping
   const materialNameToIndex = new Map(
     targetData.materials.map((material, index) => [material.name, index])
   );
 
-  // Create variant name to index mapping (now preserving order)
+  // Create variant name to index mapping
   const variantNameToIndex = new Map(
     orderedVariants.map((name, index) => [name, index])
   );
@@ -219,58 +265,111 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
   // Apply material assignments to meshes
   targetData.meshes.forEach((mesh: GltfMesh) => {
     const meshAssignment = materialData.meshAssignments[mesh.name];
-    if (!meshAssignment) return;
+    
+    // Clear existing variant extensions from all primitives first
+    mesh.primitives.forEach(primitive => {
+      if (primitive.extensions?.KHR_materials_variants) {
+        delete primitive.extensions.KHR_materials_variants;
+      }
+      
+      // Clean up empty extensions object
+      if (primitive.extensions && Object.keys(primitive.extensions).length === 0) {
+        delete primitive.extensions;
+      }
+    });
 
-    // Validate material assignments before applying
-    if (!validateMaterialAssignments(mesh.name, meshAssignment, targetData.materials)) {
-      console.warn(`Skipping invalid material assignments for mesh "${mesh.name}"`);
+    // If no assignment exists for this mesh, keep original material and skip variants
+    if (!meshAssignment) {
+      console.log(`No assignment found for mesh "${mesh.name}", keeping original material`);
       return;
     }
 
-    mesh.primitives.forEach(primitive => {
-      if (!primitive.extensions) primitive.extensions = {};
-      if (!primitive.extensions.KHR_materials_variants) {
-        primitive.extensions.KHR_materials_variants = { mappings: [] };
-      }
+    console.log(`Processing mesh "${mesh.name}"...`);
+    console.log('Assignment:', meshAssignment);
 
-      // Clear existing mappings to prevent duplicates
-      primitive.extensions.KHR_materials_variants.mappings = [];
-
+    mesh.primitives.forEach((primitive, primitiveIndex) => {
       // Set default material if specified
       if (meshAssignment.defaultMaterial) {
         const defaultMaterialIndex = materialNameToIndex.get(meshAssignment.defaultMaterial);
         if (defaultMaterialIndex !== undefined) {
           primitive.material = defaultMaterialIndex;
+          console.log(`Set default material for ${mesh.name} primitive ${primitiveIndex} to ${meshAssignment.defaultMaterial} (index: ${defaultMaterialIndex})`);
+        } else {
+          console.warn(`Default material "${meshAssignment.defaultMaterial}" not found for mesh "${mesh.name}"`);
         }
       }
 
-      // Sort variants to match the global order
-      const sortedVariants = meshAssignment.variants
-        .sort((a, b) => {
-          const indexA = orderedVariants.indexOf(a.name);
-          const indexB = orderedVariants.indexOf(b.name);
-          return indexA - indexB;
-        });
-
-      // Add variant mappings in the correct order
-      sortedVariants.forEach(variant => {
-        const materialIndex = materialNameToIndex.get(variant.material);
-        const variantIndex = variantNameToIndex.get(variant.name);
-
-        if (materialIndex !== undefined && variantIndex !== undefined) {
-          primitive.extensions!.KHR_materials_variants!.mappings.push({
-            material: materialIndex,
-            variants: [variantIndex]
+      // Only add variants if they exist for this mesh
+      if (meshAssignment.variants && meshAssignment.variants.length > 0) {
+        // Sort variants to match the global order
+        const sortedVariants = meshAssignment.variants
+          .sort((a, b) => {
+            const indexA = orderedVariants.indexOf(a.name);
+            const indexB = orderedVariants.indexOf(b.name);
+            return indexA - indexB;
+          })
+          .filter(variant => {
+            // Filter out invalid variants
+            const materialIndex = materialNameToIndex.get(variant.material);
+            const variantIndex = variantNameToIndex.get(variant.name);
+            return materialIndex !== undefined && variantIndex !== undefined;
           });
-        } else {
-          console.warn(
-            `Unable to create variant mapping for mesh "${mesh.name}": ` +
-            `material "${variant.material}" or variant "${variant.name}" not found`
-          );
+
+        // Only add variant extension if we have valid variants
+        if (sortedVariants.length > 0) {
+          if (!primitive.extensions) {
+            primitive.extensions = {};
+          }
+
+          const mappings = sortedVariants.map(variant => {
+            const materialIndex = materialNameToIndex.get(variant.material);
+            const variantIndex = variantNameToIndex.get(variant.name);
+            return {
+              material: materialIndex!,
+              variants: [variantIndex!]
+            };
+          });
+
+          // Only add variants extension if we have valid mappings
+          if (mappings.length > 0) {
+            primitive.extensions.KHR_materials_variants = {
+              mappings: mappings
+            };
+            console.log(`Added ${mappings.length} variant mappings for ${mesh.name} primitive ${primitiveIndex}`);
+          }
         }
-      });
+      }
+
+      // Clean up empty extensions
+      if (primitive.extensions && Object.keys(primitive.extensions).length === 0) {
+        delete primitive.extensions;
+      }
     });
   });
+
+  // Clean up global extensions if no meshes use variants
+  const anyMeshHasVariants = targetData.meshes.some(mesh => 
+    mesh.primitives.some(primitive => 
+      primitive.extensions?.KHR_materials_variants
+    )
+  );
+
+  if (!anyMeshHasVariants) {
+    delete targetData.extensions.KHR_materials_variants;
+    if (targetData.extensionsUsed) {
+      const index = targetData.extensionsUsed.indexOf('KHR_materials_variants');
+      if (index !== -1) {
+        targetData.extensionsUsed.splice(index, 1);
+      }
+    }
+  }
+
+  // Clean up empty extensions object at root level
+  if (targetData.extensions && Object.keys(targetData.extensions).length === 0) {
+    delete targetData.extensions;
+  }
+
+  console.log('Variant application completed');
 }
 
 // Update applyMoodRotation to preserve AO textures
