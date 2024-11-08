@@ -1,17 +1,32 @@
 // src/components/MaterialMeshEditor/MeshItem.tsx
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, X, Zap, ChevronUp, Plus } from 'lucide-react';
+import { 
+  GripVertical, 
+  ChevronDown, 
+  ChevronRight, 
+  ChevronUp, 
+  X, 
+  Zap,
+  Plus 
+} from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import SearchableSelect from '@/components/ui/searchable-select';
 import TagSelectionModal from '../Dialogs/TagSelectionModal';
+import { cn } from "@/lib/utils";
 
 interface MeshItemProps {
   meshName: string;
@@ -24,7 +39,7 @@ interface MeshItemProps {
   onToggle: (meshName: string) => void;
   onRename: (meshName: string) => void;
   onRemove: (meshName: string) => void;
-  onAutoAssign: (meshName: string, tag: string) => void; // Updated signature
+  onAutoAssign: (meshName: string, tag: string) => void;
   onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
   onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
@@ -34,10 +49,10 @@ interface MeshItemProps {
   totalItems: number;
   onMove: (index: number, direction: 'up' | 'down') => void;
   canMove: (index: number, direction: 'up' | 'down') => boolean;
-  availableTags: string[]; // Add this new prop
+  availableTags: string[];
 }
 
-const MeshItem: React.FC<MeshItemProps> = ({
+const MeshItem: React.FC<MeshItemProps> = ({ 
   meshName,
   assignment,
   materials,
@@ -57,35 +72,48 @@ const MeshItem: React.FC<MeshItemProps> = ({
   canMove,
   availableTags
 }) => {
-  const [expandedVariants, setExpandedVariants] = useState<boolean>(false);
   const [isTagSelectionOpen, setIsTagSelectionOpen] = useState(false);
-
-  // Update the auto-assign button click handler
-  const handleAutoAssignClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsTagSelectionOpen(true);
-  };
+  const [expandedVariants, setExpandedVariants] = useState(false);
 
   return (
     <Card 
       ref={provided.innerRef}
-      {...provided.draggableProps}
-      {...provided.dragHandleProps}
+      {...provided.attributes}
       className={cn(
         "group transition-all duration-200",
-        expanded ? "shadow-md" : "shadow-sm hover:shadow-md",
         "border-gray-200 dark:border-gray-700",
-        "cursor-grab active:cursor-grabbing",
-        // Add hover indicator on the left side
-        "before:absolute before:inset-y-0 before:left-0 before:w-1",
-        "before:bg-gray-200 dark:before:bg-gray-700",
-        "before:group-hover:bg-blue-500 before:transition-colors",
-        "relative"
+        "relative",
+        "transform-gpu",
+        provided.isDragging && [
+          "shadow-lg",
+          "cursor-grabbing",
+          "z-50",
+          "!transform-none",
+          "opacity-95",
+          "[&_*]:pointer-events-none"
+        ]
       )}
     >
       <CardHeader className="py-3 px-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            {/* Drag Handle */}
+            <div
+              {...provided.dragHandleProps}
+              className={cn(
+                "flex items-center gap-2 p-2 rounded cursor-grab active:cursor-grabbing",
+                "hover:bg-gray-100 dark:hover:bg-gray-800",
+                "transition-colors duration-200",
+                "touch-none select-none",
+                provided.isDragging && "cursor-grabbing"
+              )}
+              style={{
+                touchAction: 'none'
+              }}
+            >
+              <GripVertical className="h-5 w-5 text-gray-400" />
+            </div>
+            
             <Button
               onClick={() => onToggle(meshName)}
               variant="ghost"
@@ -117,8 +145,8 @@ const MeshItem: React.FC<MeshItemProps> = ({
                     className="h-6 px-1"
                     disabled={!canMove(index, 'up')}
                   >
-                    <ChevronUp size={16} className={cn(
-                      "transition-colors",
+                    <ChevronUp className={cn(
+                      "h-4 w-4 transition-colors",
                       !canMove(index, 'up') ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
                     )} />
                   </Button>
@@ -135,8 +163,8 @@ const MeshItem: React.FC<MeshItemProps> = ({
                     className="h-6 px-1"
                     disabled={!canMove(index, 'down')}
                   >
-                    <ChevronDown size={16} className={cn(
-                      "transition-colors",
+                    <ChevronDown className={cn(
+                      "h-4 w-4 transition-colors",
                       !canMove(index, 'down') ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
                     )} />
                   </Button>
@@ -160,23 +188,23 @@ const MeshItem: React.FC<MeshItemProps> = ({
             </Tooltip>
 
             <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              onClick={handleAutoAssignClick} 
-              variant="outline"
-              size="sm"
-              className="hover:bg-blue-50 dark:hover:bg-blue-900"
-            >
-              <Zap className="h-4 w-4 text-blue-500" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Auto-assign by tag</TooltipContent>
-        </Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  onClick={() => setIsTagSelectionOpen(true)} 
+                  variant="outline"
+                  size="sm"
+                  className="hover:bg-blue-50 dark:hover:bg-blue-900"
+                >
+                  <Zap className="h-4 w-4 text-blue-500" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Auto-assign by tag</TooltipContent>
+            </Tooltip>
 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button 
-                  onClick={() => onRemove(meshName)} 
+                  onClick={() => onRemove(meshName)}
                   variant="outline" 
                   size="sm"
                   className="hover:bg-red-50 dark:hover:bg-red-900"

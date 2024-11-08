@@ -82,6 +82,14 @@ export default function Home() {
     reader.readAsText(file);
   };
 
+  const handleClear = () => {
+    setMaterialData(null);
+    setMaterialFileName(null);
+    setFeedback('All data cleared');
+    localStorage.removeItem('materialData');
+    localStorage.removeItem('materialFileName');
+  };
+
   const handleSave = useCallback((updatedData: MaterialData) => {
     handleMaterialDataUpdate(updatedData);
     
@@ -92,53 +100,46 @@ export default function Home() {
     a.download = materialFileName || 'updated_materials.json';
     a.click();
     URL.revokeObjectURL(url);
+    setFeedback('Material data saved successfully');
   }, [materialFileName, handleMaterialDataUpdate]);
-
-  const handleClear = () => {
-    setMaterialData(null);
-    setMaterialFileName(null);
-    setFeedback('All data cleared');
-    localStorage.removeItem('materialData');
-    localStorage.removeItem('materialFileName');
-  };
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50 dark:bg-gray-900">
       <div className="grid grid-cols-3 w-full gap-4 p-4">
         {/* Left Panel - Fixed width, scrollable content */}
         <CustomScrollArea className="h-full px-4">
-        <div className="col-span-1 h-screen -mt-4 -ml-4 p-4 border-r bg-background">
-          {feedback && (
-            <Alert variant="default" className="mb-4">
-              <AlertDescription>{feedback}</AlertDescription>
-            </Alert>
-          )}
-          
-          <Card className="shadow-sm">
-            <CardHeader className="py-3">
-              <CardTitle className="text-lg">Update GLTF Files</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {materialData && (
-                <GltfUpdater 
-                  materialData={materialData} 
-                  referenceFile={referenceFileState.file}
-                  setReferenceFile={setReferenceFile}
-                  referenceFileName={referenceFileState.fileName}
-                  referenceFilePath={referenceFileState.filePath}
-                  isReferenceFileStored={referenceFileState.isStored}
-                  clearReferenceFile={clearReferenceFile}
-                  setFeedback={setFeedback}
-                  setReferenceMaterials={setReferenceMaterials}
-                  setReferenceMeshes={setReferenceMeshes}
-                  openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
-                  openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
-                  updateMaterialData={handleMaterialDataUpdate}
-                />
-              )}
-            </CardContent>
-          </Card>
-        </div>
+          <div className="col-span-1 h-screen -mt-4 -ml-4 p-4 border-r bg-background">
+            {feedback && (
+              <Alert variant="default" className="mb-4">
+                <AlertDescription>{feedback}</AlertDescription>
+              </Alert>
+            )}
+            
+            <Card className="shadow-sm">
+              <CardHeader className="py-3">
+                <CardTitle className="text-lg">Update GLTF Files</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {materialData && (
+                  <GltfUpdater 
+                    materialData={materialData} 
+                    referenceFile={referenceFileState.file}
+                    setReferenceFile={setReferenceFile}
+                    referenceFileName={referenceFileState.fileName}
+                    referenceFilePath={referenceFileState.filePath}
+                    isReferenceFileStored={referenceFileState.isStored}
+                    clearReferenceFile={clearReferenceFile}
+                    setFeedback={setFeedback}
+                    setReferenceMaterials={setReferenceMaterials}
+                    setReferenceMeshes={setReferenceMeshes}
+                    openReferenceMaterialsModal={() => setIsReferenceMaterialsModalOpen(true)}
+                    openReferenceMeshesModal={() => setIsReferenceMeshesModalOpen(true)}
+                    updateMaterialData={handleMaterialDataUpdate}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </CustomScrollArea>
 
         {/* Right Panel */}
@@ -171,13 +172,24 @@ export default function Home() {
             <div className="h-full flex flex-col">
               <Card className="flex-1 shadow-sm overflow-hidden">
                 <CardHeader className="py-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Edit Materials</CardTitle>
-                  <div className="flex gap-2">
-                  <Button onClick={handleClear} variant="outline" className="mt-4 w-full">
-                    Clear All Data
-                  </Button>
-                  </div>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Edit Materials</CardTitle>
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={handleClear} 
+                        variant="outline" 
+                        size="sm"
+                      >
+                        Clear All
+                      </Button>
+                      <Button 
+                        onClick={() => handleSave(materialData)}
+                        variant="default"
+                        size="sm"
+                      >
+                        Save Changes
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">

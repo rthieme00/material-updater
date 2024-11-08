@@ -656,23 +656,13 @@ const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) 
         {/* Action Buttons */}
         <div className="flex gap-2">
           {activeSection === 'materials' && (
-            <>
-              <Button 
-                onClick={() => setIsSortDialogOpen(true)}
-                size="sm"
-                variant="outline"
-              >
-                Sort Materials
-              </Button>
-              {data.materials.length > 0 && (
-                <Button 
-                  onClick={handleSave}
-                  size="sm"
-                >
-                  Save
-                </Button>
-              )}
-            </>
+            <Button 
+              onClick={() => setIsSortDialogOpen(true)}
+              size="sm"
+              variant="outline"
+            >
+              Sort Materials
+            </Button>
           )}
         </div>
       </div>
