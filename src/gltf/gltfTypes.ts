@@ -9,7 +9,7 @@ export interface TagSortState {
 export interface MaterialSortSettings {
   tagStates: TagSortState[];
   timestamp: number;
-  autoSortEnabled: boolean; // Add this field
+  autoSortEnabled: boolean;
 }
 
 export interface Material {
@@ -25,13 +25,17 @@ export interface Variant {
 export interface MeshAssignment {
   defaultMaterial: string;
   variants: Variant[];
+  autoTag?: {
+    enabled: boolean;
+    tag: string;
+  };
 }
 
 export interface MaterialData {
   materials: Material[];
   meshAssignments: { [meshName: string]: MeshAssignment };
   models?: { [modelName: string]: string[] };
-  sortSettings?: MaterialSortSettings;  // Added this field
+  sortSettings?: MaterialSortSettings;
 }
 
 export interface GltfImage {

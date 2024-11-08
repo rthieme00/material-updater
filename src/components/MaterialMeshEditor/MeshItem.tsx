@@ -33,6 +33,10 @@ interface MeshItemProps {
   assignment: {
     defaultMaterial: string;
     variants: Array<{ name: string; material: string }>;
+    autoTag?: {
+      enabled: boolean;
+      tag: string;
+    };
   };
   materials: Array<{ name: string }>;
   expanded: boolean;
@@ -40,6 +44,7 @@ interface MeshItemProps {
   onRename: (meshName: string) => void;
   onRemove: (meshName: string) => void;
   onAutoAssign: (meshName: string, tag: string) => void;
+  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string) => void;
   onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
   onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
@@ -70,10 +75,25 @@ const MeshItem: React.FC<MeshItemProps> = ({
   totalItems,
   onMove,
   canMove,
-  availableTags
+  availableTags,
+  onAutoTagChange
 }) => {
   const [isTagSelectionOpen, setIsTagSelectionOpen] = useState(false);
   const [expandedVariants, setExpandedVariants] = useState(false);
+
+  const autoTagEnabled = assignment.autoTag?.enabled || false;
+  const autoTagClass = cn(
+    "hover:bg-blue-50 dark:hover:bg-blue-900",
+    autoTagEnabled && "bg-blue-100 dark:bg-blue-800"
+  );
+
+  const handleAutoTagClick = () => {
+    if (autoTagEnabled) {
+      onAutoTagChange(meshName, false);
+    } else {
+      setIsTagSelectionOpen(true);
+    }
+  };
 
   return (
     <Card 
@@ -190,15 +210,20 @@ const MeshItem: React.FC<MeshItemProps> = ({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button 
-                  onClick={() => setIsTagSelectionOpen(true)} 
-                  variant="outline"
+                  onClick={handleAutoTagClick}
+                  variant="outline" 
                   size="sm"
-                  className="hover:bg-blue-50 dark:hover:bg-blue-900"
+                  className={autoTagClass}
                 >
                   <Zap className="h-4 w-4 text-blue-500" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Auto-assign by tag</TooltipContent>
+              <TooltipContent>
+                {autoTagEnabled 
+                  ? `Auto-tagging enabled for variants (${assignment.autoTag?.tag})`
+                  : "Enable auto-tagging for variants"
+                }
+              </TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -321,8 +346,13 @@ const MeshItem: React.FC<MeshItemProps> = ({
       <TagSelectionModal
         isOpen={isTagSelectionOpen}
         onClose={() => setIsTagSelectionOpen(false)}
-        onSelectTag={(tag) => onAutoAssign(meshName, tag)}
+        onSelectTag={(tag) => {
+          onAutoTagChange(meshName, true, tag);
+          setIsTagSelectionOpen(false);
+        }}
         tags={availableTags}
+        title="Select Auto-Tag"
+        description="This mesh will automatically use materials with the selected tag"
       />
     </Card>
   );

@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch"; // Add this import
-import { Card, CardContent } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"; // Add this import
+import { Switch } from "@/components/ui/switch";
+import { Card } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import InputDialog from '../Dialogs/InputDialog';
 import MaterialsSection from './MaterialsSection';
 import MeshAssignmentsSection from './MeshAssignmentsSection';
@@ -14,7 +14,6 @@ import { debounce } from 'lodash';
 import { MaterialData, Material, MeshAssignment, Variant, TagSortState } from '@/gltf/gltfTypes';
 import { ScrollArea } from '../ui/scroll-area';
 import PreviewVariantsSection from './PreviewVariantsSection';
-
 
 interface MaterialMeshEditorProps {
   data: MaterialData;
@@ -35,16 +34,13 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   const [expandedMeshes, setExpandedMeshes] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
-  // Initialize auto-sort from data or default to false
   const [isAutoSortEnabled, setIsAutoSortEnabled] = useState(
     data.sortSettings?.autoSortEnabled ?? false
   );
 
-  // Add new state for add material dialog
   const [isAddMaterialDialogOpen, setIsAddMaterialDialogOpen] = useState(false);
   const [isAddMeshDialogOpen, setIsAddMeshDialogOpen] = useState(false);
   const [newMaterialTags, setNewMaterialTags] = useState<string>('');
-
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [isSortDialogOpen, setIsSortDialogOpen] = useState(false);
@@ -57,12 +53,148 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     newTags: string[];
   }>>([]);
 
+  const safeUpdate = useCallback((updatedData: MaterialData) => {
+    if (onUpdate) {
+      onUpdate(updatedData);
+    }
+  }, [onUpdate]);
+
+  const autoTagAssignments = useMemo(() => {
+    return Object.entries(meshAssignments).filter(([_, assignment]) => 
+      assignment.autoTag?.enabled && assignment.autoTag.tag
+    );
+  }, [meshAssignments]);
+
   const updateAllTags = useCallback((materials: Material[]) => {
     const tags = new Set<string>();
     materials.forEach(material => material.tags.forEach(tag => tags.add(tag)));
     setAllTags(Array.from(tags));
   }, []);
-  
+
+  // Remove the auto-loading from localStorage in this useEffect
+  useEffect(() => {
+    try {
+      if (data) {  // Only set state if data is provided
+        setMaterials(data.materials || []);
+        setMeshAssignments(data.meshAssignments || {});
+        updateAllTags(data.materials || []);
+        setIsAutoSortEnabled(data.sortSettings?.autoSortEnabled ?? false);
+      } else {
+        // If no data, ensure clean state
+        setMaterials([]);
+        setMeshAssignments({});
+        setAllTags([]);
+        setIsAutoSortEnabled(false);
+        setActiveSection(null);
+        setExpandedMeshes(new Set());
+      }
+    } catch (error) {
+      console.error('Error setting initial state:', error);
+    }
+  }, [data, updateAllTags]);
+
+  // Modified autoTagChange handler to prevent infinite loops
+  const handleAutoTagChange = useCallback((meshName: string, enabled: boolean, tag?: string) => {
+    setMeshAssignments(prev => {
+      const currentAssignment = prev[meshName];
+      
+      // Create new assignment object
+      const newAssignment = {
+        ...currentAssignment,
+        autoTag: enabled ? { 
+          enabled, 
+          tag: tag || currentAssignment?.autoTag?.tag || '' 
+        } : undefined
+      };
+
+      // Only update variants if auto-tag is enabled and tag is provided
+      if (enabled && tag) {
+        const taggedMaterials = materials.filter(m => m.tags.includes(tag));
+        if (taggedMaterials.length > 0) {
+          newAssignment.variants = taggedMaterials.map(m => ({ 
+            name: m.name, 
+            material: m.name 
+          }));
+        }
+      }
+
+      const newAssignments = {
+        ...prev,
+        [meshName]: newAssignment
+      };
+
+      // Batch the update to prevent multiple re-renders
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments: newAssignments
+      };
+      
+      // Use requestAnimationFrame to batch the update
+      requestAnimationFrame(() => {
+        safeUpdate(updatedData);
+      });
+
+      return newAssignments;
+    });
+  }, [data, materials, safeUpdate]);
+
+  // Modified effect to handle auto-tag updates more efficiently
+  useEffect(() => {
+    if (!materials.length) return;
+
+    const autoTaggedMeshes = autoTagAssignments.filter(([_, assignment]) => 
+      assignment.autoTag?.enabled && assignment.autoTag.tag
+    );
+
+    if (autoTaggedMeshes.length === 0) return;
+
+    const updates: { [key: string]: typeof meshAssignments[string] } = {};
+    let hasChanges = false;
+
+    autoTaggedMeshes.forEach(([meshName, assignment]) => {
+      const tag = assignment.autoTag?.tag;
+      if (!tag) return;
+
+      const taggedMaterials = materials.filter(m => m.tags.includes(tag));
+      if (taggedMaterials.length === 0) return;
+
+      const newVariants = taggedMaterials.map(m => ({ 
+        name: m.name, 
+        material: m.name 
+      }));
+
+      if (JSON.stringify(assignment.variants) !== JSON.stringify(newVariants)) {
+        hasChanges = true;
+        updates[meshName] = {
+          ...assignment,
+          variants: newVariants
+        };
+      }
+    });
+
+    if (hasChanges) {
+      setMeshAssignments(prev => ({
+        ...prev,
+        ...updates
+      }));
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments: {
+          ...meshAssignments,
+          ...updates
+        }
+      };
+
+      // Batch update using requestAnimationFrame
+      requestAnimationFrame(() => {
+        safeUpdate(updatedData);
+      });
+    }
+  }, [materials, autoTagAssignments, data, safeUpdate]);
+
   useEffect(() => {
     try {
       setMaterials(data.materials || []);
@@ -73,102 +205,85 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [data, updateAllTags]);
 
-  // Update autoSort effect
   useEffect(() => {
     setIsAutoSortEnabled(data.sortSettings?.autoSortEnabled ?? false);
   }, [data.sortSettings?.autoSortEnabled]);
 
-  // Add safety check at the start of handlers
-  const safeUpdate = useCallback((updatedData: MaterialData) => {
-    if (typeof onUpdate === 'function') {
-      onUpdate(updatedData);
+  const sortMaterialsByCurrentSettings = useCallback((materialsToSort: Material[]) => {
+    if (!data.sortSettings?.tagStates) return materialsToSort;
+
+    const enabledTags = data.sortSettings.tagStates
+      .filter(tag => tag.enabled)
+      .sort((a, b) => a.order - b.order)
+      .map(tag => tag.name);
+
+    const isUntaggedEnabled = data.sortSettings.tagStates
+      .find(t => t.name === 'Untagged')?.enabled ?? true;
+
+    const materialGroups = new Map<string, Material[]>();
+    enabledTags.forEach(tag => materialGroups.set(tag, []));
+    materialGroups.set('untagged', []);
+    materialGroups.set('remaining', []);
+
+    materialsToSort.forEach(material => {
+      if (material.tags.length === 0) {
+        materialGroups.get('untagged')?.push(material);
+        return;
+      }
+
+      let assigned = false;
+      for (const tag of enabledTags) {
+        if (material.tags.includes(tag)) {
+          materialGroups.get(tag)?.push(material);
+          assigned = true;
+          break;
+        }
+      }
+
+      if (!assigned) {
+        materialGroups.get('remaining')?.push(material);
+      }
+    });
+
+    enabledTags.forEach(tag => {
+      const group = materialGroups.get(tag);
+      if (group) {
+        materialGroups.set(tag, group.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    });
+
+    if (isUntaggedEnabled) {
+      const untaggedGroup = materialGroups.get('untagged');
+      if (untaggedGroup) {
+        materialGroups.set('untagged', untaggedGroup.sort((a, b) => a.name.localeCompare(b.name)));
+      }
     }
-  }, [onUpdate]);
 
-    // Move sortMaterialsByCurrentSettings to the top, before other functions that use it
-    const sortMaterialsByCurrentSettings = useCallback((materialsToSort: Material[]) => {
-      if (!data.sortSettings?.tagStates) return materialsToSort;
-  
-      const enabledTags = data.sortSettings.tagStates
-        .filter(tag => tag.enabled)
-        .sort((a, b) => a.order - b.order)
-        .map(tag => tag.name);
-  
-      const isUntaggedEnabled = data.sortSettings.tagStates
-        .find(t => t.name === 'Untagged')?.enabled ?? true;
-  
-      // Create groups for materials
-      const materialGroups = new Map<string, Material[]>();
-      enabledTags.forEach(tag => materialGroups.set(tag, []));
-      materialGroups.set('untagged', []);
-      materialGroups.set('remaining', []);
-  
-      // Distribute materials to groups
-      materialsToSort.forEach(material => {
-        if (material.tags.length === 0) {
-          materialGroups.get('untagged')?.push(material);
-          return;
-        }
-  
-        let assigned = false;
-        for (const tag of enabledTags) {
-          if (material.tags.includes(tag)) {
-            materialGroups.get(tag)?.push(material);
-            assigned = true;
-            break;
-          }
-        }
-  
-        if (!assigned) {
-          materialGroups.get('remaining')?.push(material);
-        }
-      });
-  
-      // Sort materials within each group
-      enabledTags.forEach(tag => {
-        const group = materialGroups.get(tag);
-        if (group) {
-          materialGroups.set(tag, group.sort((a, b) => a.name.localeCompare(b.name)));
-        }
-      });
-  
-      if (isUntaggedEnabled) {
-        const untaggedGroup = materialGroups.get('untagged');
-        if (untaggedGroup) {
-          materialGroups.set('untagged', untaggedGroup.sort((a, b) => a.name.localeCompare(b.name)));
-        }
-      }
-  
-      // Combine all groups in order
-      const sortedMaterials: Material[] = [];
-      enabledTags.forEach(tag => {
-        sortedMaterials.push(...(materialGroups.get(tag) || []));
-      });
-      if (isUntaggedEnabled) {
-        sortedMaterials.push(...(materialGroups.get('untagged') || []));
-      }
-      sortedMaterials.push(...(materialGroups.get('remaining') || []));
-  
-      return sortedMaterials;
-    }, [data.sortSettings?.tagStates]);
+    const sortedMaterials: Material[] = [];
+    enabledTags.forEach(tag => {
+      sortedMaterials.push(...(materialGroups.get(tag) || []));
+    });
+    if (isUntaggedEnabled) {
+      sortedMaterials.push(...(materialGroups.get('untagged') || []));
+    }
+    sortedMaterials.push(...(materialGroups.get('remaining') || []));
 
-  // Update handleMaterialOrderChange for drag and drop
+    return sortedMaterials;
+  }, [data.sortSettings?.tagStates]);
+
   const handleMaterialOrderChange = useCallback((result: any) => {
     if (!result.destination) return;
 
     setMaterials(prevMaterials => {
-      // First apply the manual movement
       const items = Array.from(prevMaterials);
       const [reorderedItem] = items.splice(result.source.index, 1);
       items.splice(result.destination.index, 0, reorderedItem);
 
-      // Then apply auto-sort if enabled
       const finalMaterials = isAutoSortEnabled 
         ? sortMaterialsByCurrentSettings(items)
         : items;
 
-      // Update parent data
-      const updatedData: MaterialData = {
+      const updatedData = {
         ...data,
         materials: finalMaterials
       };
@@ -186,7 +301,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsAddMeshDialogOpen(true);
   }, []);
 
-  // Update other handlers to properly handle auto-sort
   const handleAddMaterialSubmit = useCallback((materialNames: string) => {
     const newMaterialNames = materialNames.split(',').map(m => m.trim()).filter(m => m);
     
@@ -195,7 +309,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       tags: newMaterialTags.split(',').map(t => t.trim()).filter(t => t)
     }));
 
-    // Check for duplicates
     const duplicates = newMaterials.filter(newMat => 
       materials.some(existingMat => existingMat.name === newMat.name)
     ).map(dupMat => ({
@@ -249,48 +362,10 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsAddMeshDialogOpen(false);
   }, [meshAssignments, data, materials, safeUpdate]);
 
-  const handleAddMaterials = useCallback(() => {
-    const input = prompt('Enter new materials (comma-separated):');
-    if (input) {
-      const newMaterialNames = input.split(',').map(m => m.trim()).filter(m => m);
-      const tags = prompt('Enter tags for new materials (comma-separated):');
-      if (tags) {
-        const tagList = tags.split(',').map(t => t.trim()).filter(t => t);
-        
-        const newMaterials = newMaterialNames.map(name => ({
-          name,
-          tags: tagList
-        }));
-  
-        // Check for duplicates
-        const duplicates = newMaterials.filter(newMat => 
-          materials.some(existingMat => existingMat.name === newMat.name)
-        ).map(dupMat => ({
-          name: dupMat.name,
-          existingTags: materials.find(m => m.name === dupMat.name)?.tags || [],
-          newTags: dupMat.tags
-        }));
-  
-        if (duplicates.length > 0) {
-          setDuplicateMaterials(duplicates);
-          setIsDuplicateDialogOpen(true);
-          return;
-        }
-  
-        setMaterials(prevMaterials => {
-          const updatedMaterials = [...prevMaterials, ...newMaterials];
-          updateAllTags(updatedMaterials);
-          return updatedMaterials;
-        });
-      }
-    }
-  }, [materials, updateAllTags]);
-
   const handleDuplicateConfirm = useCallback((keepBoth: boolean) => {
     setIsDuplicateDialogOpen(false);
     
     if (keepBoth) {
-      // Add numeric suffix to duplicate materials
       const newMaterials = duplicateMaterials.map(dupMat => ({
         name: `${dupMat.name}_1`,
         tags: dupMat.newTags
@@ -302,7 +377,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         return updated;
       });
     } else {
-      // Replace existing materials
       setMaterials(prev => {
         const updated = prev.map(material => {
           const duplicate = duplicateMaterials.find(dup => dup.name === material.name);
@@ -320,7 +394,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [duplicateMaterials, updateAllTags]);
 
-  // Update handleSortMaterials to include autoSortEnabled in settings
   const handleSortMaterials = useCallback((sortedMaterials: Material[], sortSettings: TagSortState[]) => {
     const updatedData: MaterialData = {
       ...data,
@@ -328,7 +401,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       sortSettings: {
         tagStates: sortSettings,
         timestamp: Date.now(),
-        autoSortEnabled: isAutoSortEnabled // Preserve auto-sort setting
+        autoSortEnabled: isAutoSortEnabled
       }
     };
     
@@ -336,7 +409,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setMaterials(sortedMaterials);
   }, [data, isAutoSortEnabled, onUpdate]);
 
-  // Modify the material update functions to include auto-sorting
   const updateMaterialsWithSort = useCallback((updatedMaterials: Material[]) => {
     const finalMaterials = isAutoSortEnabled && data.sortSettings?.tagStates
       ? sortMaterialsByCurrentSettings(updatedMaterials)
@@ -350,7 +422,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     onUpdate(updatedData);
   }, [data, onUpdate, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
-  // Update existing handlers to use the new updateMaterialsWithSort function
   const handleRemoveMaterial = useCallback((materialName: string) => {
     setMaterials(prevMaterials => {
       const filteredMaterials = prevMaterials.filter(m => m.name !== materialName);
@@ -376,17 +447,14 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setMaterials(prevMaterials => {
       const newIndex = direction === 'up' ? index - 1 : index + 1;
       
-      // Check if move is valid
       if (newIndex < 0 || newIndex >= prevMaterials.length) {
         return prevMaterials;
       }
       
-      // First apply the manual movement
       const newMaterials = [...prevMaterials];
       const [movedItem] = newMaterials.splice(index, 1);
       newMaterials.splice(newIndex, 0, movedItem);
       
-      // Then apply auto-sort if enabled
       const finalMaterials = isAutoSortEnabled 
         ? sortMaterialsByCurrentSettings(newMaterials)
         : newMaterials;
@@ -400,12 +468,12 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       return finalMaterials;
     });
   }, [data, safeUpdate, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
+
   const handleEditTags = useCallback((materialName: string) => {
     setCurrentItemToTag(materialName);
     setIsTagDialogOpen(true);
   }, []);
 
-  // Modify the handler for tag changes
   const handleTagSubmit = useCallback((newTags: string) => {
     if (currentItemToTag) {
       const tagList = newTags.split(',')
@@ -426,34 +494,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsTagDialogOpen(false);
   }, [currentItemToTag, updateMaterialsWithSort, updateAllTags]);
 
-  const onDragEnd = (result: any) => {
-    if (!result.destination) {
-      return;
-    }
-
-    const items = Array.from(materials);
-    const [reorderedItem] = items.splice(result.source.index, 1);
-    items.splice(result.destination.index, 0, reorderedItem);
-
-    setMaterials(items);
-  };
-
-  const handleSortMaterialsByName = () => {
-    setMaterials(prevMaterials => [...prevMaterials].sort((a, b) => a.name.localeCompare(b.name)));
-  };
-
-  // Add this effect to ensure MaterialSortDialog gets updated sortSettings
-  useEffect(() => {
-    if (isSortDialogOpen && data.sortSettings) {
-      const currentSettings = {
-        ...data.sortSettings,
-        autoSortEnabled: isAutoSortEnabled
-      };
-      // Update sort dialog state if needed
-    }
-  }, [isSortDialogOpen, data.sortSettings, isAutoSortEnabled]);
-
-  // Now we can define other handlers that use sortMaterialsByCurrentSettings
   const handleAutoSortToggle = useCallback((enabled: boolean) => {
     setIsAutoSortEnabled(enabled);
     
@@ -472,30 +512,28 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     onUpdate(updatedData);
   }, [data, materials, sortMaterialsByCurrentSettings, onUpdate]);
 
-  // Update the auto-assign handler
-  const handleAutoAssignTag = (meshName: string, selectedTag: string) => {
+  const handleAutoAssignTag = useCallback((meshName: string, selectedTag: string) => {
     const taggedMaterials = materials.filter(m => m.tags.includes(selectedTag));
     if (taggedMaterials.length > 0) {
       setMeshAssignments(prev => ({
         ...prev,
         [meshName]: {
+          ...prev[meshName],
           defaultMaterial: taggedMaterials[0].name,
           variants: taggedMaterials.map(m => ({ name: m.name, material: m.name }))
         }
       }));
     }
-  };
+  }, [materials]);
 
-    // Collect all unique tags
-    const uniqueTags = useMemo(() => {
-      const tags = new Set<string>();
-      materials.forEach(material => {
-        material.tags.forEach(tag => tags.add(tag));
-      });
-      return Array.from(tags).sort();
-    }, [materials]);
+  const uniqueTags = useMemo(() => {
+    const tags = new Set<string>();
+    materials.forEach(material => {
+      material.tags.forEach(tag => tags.add(tag));
+    });
+    return Array.from(tags).sort();
+  }, [materials]);
 
-  // Fix the material renaming handler
   const handleRenameMaterial = useCallback((materialName: string) => {
     setCurrentItemToRename(materialName);
     setIsRenameDialogOpen(true);
@@ -562,7 +600,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         ...prev,
         [meshName]: {
           ...prev[meshName],
-          [field]: value || '' // Ensure we never set undefined
+          [field]: value || ''
         }
       };
 
@@ -571,14 +609,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         materials: materials,
         meshAssignments: newAssignments
       };
-      
-      console.log('Updating mesh assignment:', {
-        meshName,
-        field,
-        value,
-        newAssignments,
-        updatedData
-      });
       
       safeUpdate(updatedData);
       return newAssignments;
@@ -595,13 +625,21 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   };
 
-  const handleRemoveMesh = (meshName: string) => {
+  const handleRemoveMesh = useCallback((meshName: string) => {
     setMeshAssignments(prev => {
       const newAssignments = { ...prev };
       delete newAssignments[meshName];
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments: newAssignments
+      };
+      safeUpdate(updatedData);
+
       return newAssignments;
     });
-  };
+  }, [data, materials, safeUpdate]);
 
   const handleVariantChange = useCallback((meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
     setMeshAssignments(prev => {
@@ -620,15 +658,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         materials: materials,
         meshAssignments: newAssignments
       };
-      
-      console.log('Updating variant:', {
-        meshName,
-        index,
-        field,
-        value,
-        newAssignments,
-        updatedData
-      });
 
       safeUpdate(updatedData);
       return newAssignments;
@@ -689,7 +718,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     });
   }, []);
 
-  // If using the debounced variant change, update it like this:
   const debouncedHandleVariantChange = useMemo(
     () => debounce((meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
       handleVariantChange(meshName, index, field, value);
@@ -707,7 +735,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     const sourceIndex = (currentPage - 1) * ITEMS_PER_PAGE + result.source.index;
     const destinationIndex = (currentPage - 1) * ITEMS_PER_PAGE + result.destination.index;
 
-    // Prevent dragging outside current page
     if (Math.floor(sourceIndex / ITEMS_PER_PAGE) !== Math.floor(destinationIndex / ITEMS_PER_PAGE)) {
       return;
     }
@@ -722,14 +749,13 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
     setMeshAssignments(newAssignments);
 
-    // Update parent component
     const updatedData: MaterialData = {
       ...data,
       materials,
       meshAssignments: newAssignments
     };
     onUpdate(updatedData);
-  }, [meshAssignments, materials, data, onUpdate, currentPage, ITEMS_PER_PAGE]);
+  }, [meshAssignments, materials, data, onUpdate, currentPage]);
 
   const handleMoveMesh = useCallback((fromIndex: number, direction: 'up' | 'down') => {
     const allItems = Object.entries(meshAssignments);
@@ -738,7 +764,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     
     if (actualToIndex < 0 || actualToIndex >= allItems.length) return;
 
-    // If moving between pages, update the current page
     const newPage = Math.floor(actualToIndex / ITEMS_PER_PAGE) + 1;
     if (newPage !== currentPage) {
       setCurrentPage(newPage);
@@ -754,16 +779,14 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
     setMeshAssignments(newAssignments);
 
-    // Update parent component
     const updatedData: MaterialData = {
       ...data,
       materials,
       meshAssignments: newAssignments
     };
     onUpdate(updatedData);
-  }, [meshAssignments, materials, data, onUpdate, currentPage, ITEMS_PER_PAGE, setCurrentPage]);
+  }, [meshAssignments, materials, data, onUpdate, currentPage]);
 
-  // Helper function to determine if an item can move up/down
   const canMove = useCallback((index: number, direction: 'up' | 'down'): boolean => {
     const actualIndex = (currentPage - 1) * ITEMS_PER_PAGE + index;
     if (direction === 'up') {
@@ -771,11 +794,8 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     } else {
       return actualIndex < Object.keys(meshAssignments).length - 1;
     }
-  }, [currentPage, ITEMS_PER_PAGE, meshAssignments]);
+  }, [currentPage, meshAssignments]);
 
-  
-
-  // Update the handleRemoveTag to properly handle auto-sort
   const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) => {
     setMaterials(prevMaterials => {
       const updatedMaterials = prevMaterials.map(m =>
@@ -784,15 +804,12 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           : m
       );
 
-      // Apply auto-sort if enabled
       const sortedMaterials = isAutoSortEnabled 
         ? sortMaterialsByCurrentSettings(updatedMaterials)
         : updatedMaterials;
 
-      // Update all tags
       updateAllTags(sortedMaterials);
 
-      // Update parent data
       const updatedData = {
         ...data,
         materials: sortedMaterials,
@@ -807,19 +824,15 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     });
   }, [data, onUpdate, updateAllTags, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
-  const handleSave = () => {
-    const updatedData = {
-      materials,
-      meshAssignments
-    };
-    onSave(updatedData);
-  };
+  const handleSave = useCallback((updatedData: MaterialData) => {
+    if (onSave) {
+      onSave(updatedData);
+    }
+  }, [onSave]);
 
   return (
     <div className="flex flex-col h-full p-4">
-      {/* Top Actions Bar */}
       <div className="flex items-center justify-between mb-4 pb-4 border-b">
-        {/* Section Tabs */}
         <div className="flex space-x-2">
           <Button
             onClick={() => setActiveSection('materials')}
@@ -847,7 +860,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           </Button>
         </div>
 
-        {/* Action Buttons with updated auto-sort toggle */}
         <div className="flex items-center gap-4">
           {activeSection === 'materials' && (
             <>
@@ -878,7 +890,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         </div>
       </div>
 
-      {/* Content Area with ScrollArea */}
       <ScrollArea className="flex-1 h-[calc(100vh-12rem)] pr-4">
         <div className="h-full">
           {activeSection === 'materials' && (
@@ -894,7 +905,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onRemoveMaterial={handleRemoveMaterial}
               onMoveMaterial={handleMoveMaterial}
               onRemoveTag={handleRemoveTag}
-              isAutoSortEnabled={isAutoSortEnabled} // Add this prop
+              isAutoSortEnabled={isAutoSortEnabled}
             />
           )}
           {activeSection === 'meshes' && (
@@ -905,6 +916,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onToggleMeshExpansion={toggleMeshExpansion}
               onRenameMesh={handleRenameMesh}
               onRemoveMesh={handleRemoveMesh}
+              onAutoAssignTag={handleAutoAssignTag}
               onAssignmentChange={handleAssignmentChange}
               onVariantChange={handleVariantChange}
               onRemoveVariant={handleRemoveVariant}
@@ -918,7 +930,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               canMove={canMove}
               totalItems={Object.keys(meshAssignments).length}
               availableTags={uniqueTags}
-              onAutoAssignTag={handleAutoAssignTag}
+              onAutoTagChange={handleAutoTagChange}
             />
           )}
           {activeSection === 'variants' && (
@@ -930,7 +942,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         </div>
       </ScrollArea>
 
-      {/* Add Material Dialog */}
       <InputDialog
         isOpen={isAddMaterialDialogOpen}
         onClose={() => setIsAddMaterialDialogOpen(false)}
@@ -950,11 +961,10 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       <DuplicateMaterialDialog
         isOpen={isDuplicateDialogOpen}
         onClose={() => setIsDuplicateDialogOpen(false)}
-        onConfirm={(keepBoth) => handleDuplicateConfirm(keepBoth)}
+        onConfirm={handleDuplicateConfirm}
         duplicateMaterials={duplicateMaterials}
       />
 
-      {/* Update the InputDialog for renaming */}
       <InputDialog
         isOpen={isRenameDialogOpen}
         onClose={() => {
@@ -965,16 +975,17 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         title={`Rename ${currentItemToRename ? 'Material' : 'Mesh'}`}
         initialValue={currentItemToRename || ''}
       />
-
+      
       <InputDialog
         isOpen={isTagDialogOpen}
         onClose={() => setIsTagDialogOpen(false)}
         onSubmit={handleTagSubmit}
         title="Edit Tags"
         initialValue={currentItemToTag ? materials.find(m => m.name === currentItemToTag)?.tags.join(', ') || '' : ''}
+        type="tags"
+        placeholder="Add tags"
       />
-      
-      {/* Add Mesh Dialog */}
+
       <InputDialog
         isOpen={isAddMeshDialogOpen}
         onClose={() => setIsAddMeshDialogOpen(false)}

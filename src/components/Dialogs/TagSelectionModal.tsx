@@ -1,7 +1,14 @@
 // src/components/Dialogs/TagSelectionModal.tsx
 
 import React from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -14,14 +21,18 @@ interface TagSelectionModalProps {
   onClose: () => void;
   onSelectTag: (tag: string) => void;
   tags: string[];
+  title?: string;
+  description?: string;
 }
 
-const TagSelectionModal: React.FC<TagSelectionModalProps> = ({
+export default function TagSelectionModal({
   isOpen,
   onClose,
   onSelectTag,
-  tags
-}) => {
+  tags,
+  title = "Select Tag",
+  description = "Select a tag to apply"
+}: TagSelectionModalProps) {
   const [searchTerm, setSearchTerm] = React.useState('');
   const [selectedTag, setSelectedTag] = React.useState<string | null>(null);
 
@@ -49,8 +60,9 @@ const TagSelectionModal: React.FC<TagSelectionModalProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Tag className="h-5 w-5" />
-            Select Tag for Auto-Assignment
+            {title}
           </DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
 
         <div className="space-y-4">
@@ -102,6 +114,4 @@ const TagSelectionModal: React.FC<TagSelectionModalProps> = ({
       </DialogContent>
     </Dialog>
   );
-};
-
-export default TagSelectionModal;
+}

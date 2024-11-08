@@ -30,6 +30,7 @@ interface MeshAssignmentsSectionProps {
   canMove: (index: number, direction: 'up' | 'down') => boolean;
   totalItems: number;
   availableTags: string[]; 
+  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string) => void;
 }
 
 const MeshAssignmentsSection: React.FC<MeshAssignmentsSectionProps> = ({
@@ -52,7 +53,8 @@ const MeshAssignmentsSection: React.FC<MeshAssignmentsSectionProps> = ({
   onMoveMesh,
   canMove,
   totalItems,
-  availableTags
+  availableTags,
+  onAutoTagChange,
 }) => {
   return (
     <div className="space-y-6">
@@ -111,6 +113,7 @@ const MeshAssignmentsSection: React.FC<MeshAssignmentsSectionProps> = ({
                             onMove={onMoveMesh}
                             canMove={canMove}
                             availableTags={availableTags}
+                            onAutoTagChange={onAutoTagChange}
                           />
                         </div>
                       )}
