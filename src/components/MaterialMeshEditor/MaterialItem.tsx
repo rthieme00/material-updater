@@ -1,7 +1,7 @@
 // src/components/MaterialMeshEditor/MaterialItem.tsx
 
 import React from 'react';
-import { Tag, Edit2, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Edit2, X, ChevronUp, ChevronDown, Tag } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import TagList from '@/components/ui/tag-list';
@@ -31,7 +31,7 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
   provided 
 }) => {
   return (
-    <li
+    <div
       ref={provided.innerRef}
       {...provided.draggableProps}
       {...provided.dragHandleProps}
@@ -44,12 +44,19 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
         "cursor-grab active:cursor-grabbing",
         "before:absolute before:inset-y-0 before:left-0 before:w-1",
         "before:bg-gray-200 dark:before:bg-gray-700",
-        "before:group-hover:bg-blue-500 before:transition-colors"
+        "before:group-hover:bg-blue-500 before:transition-colors",
+        provided.isDragging && [
+          "shadow-lg",
+          "z-50",
+          "!transform-none",
+          "opacity-95",
+          "[&_*]:pointer-events-none"
+        ]
       )}
     >
-      <div className="flex items-center flex-1">
-        <div className="flex flex-col">
-          <span className="font-medium text-gray-900 dark:text-gray-100">
+      <div className="flex items-center flex-1 min-w-0">
+        <div className="flex flex-col min-w-0">
+          <span className="font-medium text-gray-900 dark:text-gray-100 truncate">
             {material.name}
           </span>
           <TagList 
@@ -60,20 +67,23 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 ml-4">
         {/* Move Buttons */}
         <div className="flex flex-col mr-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                onClick={() => onMoveMaterial(index, 'up')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveMaterial(index, 'up');
+                }}
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1"
                 disabled={index === 0}
               >
-                <ChevronUp size={16} className={cn(
-                  "transition-colors",
+                <ChevronUp className={cn(
+                  "h-4 w-4 transition-colors",
                   index === 0 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
                 )} />
               </Button>
@@ -84,14 +94,17 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                onClick={() => onMoveMaterial(index, 'down')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveMaterial(index, 'down');
+                }}
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1"
                 disabled={index === totalItems - 1}
               >
-                <ChevronDown size={16} className={cn(
-                  "transition-colors",
+                <ChevronDown className={cn(
+                  "h-4 w-4 transition-colors",
                   index === totalItems - 1 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
                 )} />
               </Button>
@@ -105,12 +118,15 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button 
-                onClick={() => onEditTags(material.name)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditTags(material.name);
+                }}
                 variant="ghost"
                 size="sm"
                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
               >
-                <Tag size={16} />
+                <Tag className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Edit Tags</TooltipContent>
@@ -119,12 +135,15 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button 
-                onClick={() => onRenameMaterial(material.name)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRenameMaterial(material.name);
+                }}
                 variant="ghost"
                 size="sm"
                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
               >
-                <Edit2 size={16} />
+                <Edit2 className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Rename Material</TooltipContent>
@@ -133,19 +152,22 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button 
-                onClick={() => onRemoveMaterial(material.name)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveMaterial(material.name);
+                }}
                 variant="ghost"
                 size="sm"
                 className="text-red-500 hover:text-red-700 hover:bg-red-50"
               >
-                <X size={16} />
+                <X className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Remove Material</TooltipContent>
           </Tooltip>
         </div>
       </div>
-    </li>
+    </div>
   );
 };
 
