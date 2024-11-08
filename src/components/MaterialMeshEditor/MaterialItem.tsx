@@ -17,18 +17,20 @@ interface MaterialItemProps {
   onMoveMaterial: (index: number, direction: 'up' | 'down') => void;
   onRemoveTag: (materialName: string, tag: string) => void;
   provided: any;
+  isAutoSortEnabled: boolean; // Add this prop
 }
 
 const MaterialItem: React.FC<MaterialItemProps> = ({ 
-  material, 
+  material,
   index,
   totalItems,
-  onEditTags, 
-  onRenameMaterial, 
+  onEditTags,
+  onRenameMaterial,
   onRemoveMaterial,
   onMoveMaterial,
   onRemoveTag,
-  provided 
+  provided,
+  isAutoSortEnabled
 }) => {
   return (
     <div
@@ -41,7 +43,8 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
         "rounded-lg border border-gray-200 dark:border-gray-700",
         "shadow-sm hover:shadow-md transition-all duration-200",
         "relative overflow-hidden",
-        "cursor-grab active:cursor-grabbing",
+        !isAutoSortEnabled && "cursor-grab active:cursor-grabbing",
+        isAutoSortEnabled && "cursor-default",
         "before:absolute before:inset-y-0 before:left-0 before:w-1",
         "before:bg-gray-200 dark:before:bg-gray-700",
         "before:group-hover:bg-blue-500 before:transition-colors",
@@ -68,50 +71,52 @@ const MaterialItem: React.FC<MaterialItemProps> = ({
       </div>
 
       <div className="flex items-center gap-2 ml-4">
-        {/* Move Buttons */}
-        <div className="flex flex-col mr-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveMaterial(index, 'up');
-                }}
-                variant="ghost"
-                size="sm"
-                className="h-6 px-1"
-                disabled={index === 0}
-              >
-                <ChevronUp className={cn(
-                  "h-4 w-4 transition-colors",
-                  index === 0 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
-                )} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move Up</TooltipContent>
-          </Tooltip>
+        {/* Move Buttons - Only show if not auto-sorted */}
+        {!isAutoSortEnabled && (
+          <div className="flex flex-col mr-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMoveMaterial(index, 'up');
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1"
+                  disabled={index === 0}
+                >
+                  <ChevronUp className={cn(
+                    "h-4 w-4 transition-colors",
+                    index === 0 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
+                  )} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Move Up</TooltipContent>
+            </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveMaterial(index, 'down');
-                }}
-                variant="ghost"
-                size="sm"
-                className="h-6 px-1"
-                disabled={index === totalItems - 1}
-              >
-                <ChevronDown className={cn(
-                  "h-4 w-4 transition-colors",
-                  index === totalItems - 1 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
-                )} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move Down</TooltipContent>
-          </Tooltip>
-        </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMoveMaterial(index, 'down');
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1"
+                  disabled={index === totalItems - 1}
+                >
+                  <ChevronDown className={cn(
+                    "h-4 w-4 transition-colors",
+                    index === totalItems - 1 ? "text-gray-300" : "text-gray-600 hover:text-gray-900"
+                  )} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Move Down</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1">

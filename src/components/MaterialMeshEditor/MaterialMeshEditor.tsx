@@ -2,16 +2,19 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch"; // Add this import
 import { Card, CardContent } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"; // Add this import
 import InputDialog from '../Dialogs/InputDialog';
 import MaterialsSection from './MaterialsSection';
 import MeshAssignmentsSection from './MeshAssignmentsSection';
 import MaterialSortDialog from '../Dialogs/MaterialSortDialog';
 import DuplicateMaterialDialog from '../Dialogs/DuplicateMaterialDialog';
 import { debounce } from 'lodash';
-import { MaterialData, Material, MeshAssignment, Variant } from '@/gltf/gltfTypes'; // Import all types
+import { MaterialData, Material, MeshAssignment, Variant, TagSortState } from '@/gltf/gltfTypes';
 import { ScrollArea } from '../ui/scroll-area';
 import PreviewVariantsSection from './PreviewVariantsSection';
+
 
 interface MaterialMeshEditorProps {
   data: MaterialData;
@@ -32,6 +35,10 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   const [expandedMeshes, setExpandedMeshes] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  // Initialize auto-sort from data or default to false
+  const [isAutoSortEnabled, setIsAutoSortEnabled] = useState(
+    data.sortSettings?.autoSortEnabled ?? false
+  );
 
   // Add new state for add material dialog
   const [isAddMaterialDialogOpen, setIsAddMaterialDialogOpen] = useState(false);
@@ -66,6 +73,11 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [data, updateAllTags]);
 
+  // Update autoSort effect
+  useEffect(() => {
+    setIsAutoSortEnabled(data.sortSettings?.autoSortEnabled ?? false);
+  }, [data.sortSettings?.autoSortEnabled]);
+
   // Add safety check at the start of handlers
   const safeUpdate = useCallback((updatedData: MaterialData) => {
     if (typeof onUpdate === 'function') {
@@ -73,25 +85,98 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [onUpdate]);
 
-  // Make sure handleMaterialOrderChange is using the callback pattern
+    // Move sortMaterialsByCurrentSettings to the top, before other functions that use it
+    const sortMaterialsByCurrentSettings = useCallback((materialsToSort: Material[]) => {
+      if (!data.sortSettings?.tagStates) return materialsToSort;
+  
+      const enabledTags = data.sortSettings.tagStates
+        .filter(tag => tag.enabled)
+        .sort((a, b) => a.order - b.order)
+        .map(tag => tag.name);
+  
+      const isUntaggedEnabled = data.sortSettings.tagStates
+        .find(t => t.name === 'Untagged')?.enabled ?? true;
+  
+      // Create groups for materials
+      const materialGroups = new Map<string, Material[]>();
+      enabledTags.forEach(tag => materialGroups.set(tag, []));
+      materialGroups.set('untagged', []);
+      materialGroups.set('remaining', []);
+  
+      // Distribute materials to groups
+      materialsToSort.forEach(material => {
+        if (material.tags.length === 0) {
+          materialGroups.get('untagged')?.push(material);
+          return;
+        }
+  
+        let assigned = false;
+        for (const tag of enabledTags) {
+          if (material.tags.includes(tag)) {
+            materialGroups.get(tag)?.push(material);
+            assigned = true;
+            break;
+          }
+        }
+  
+        if (!assigned) {
+          materialGroups.get('remaining')?.push(material);
+        }
+      });
+  
+      // Sort materials within each group
+      enabledTags.forEach(tag => {
+        const group = materialGroups.get(tag);
+        if (group) {
+          materialGroups.set(tag, group.sort((a, b) => a.name.localeCompare(b.name)));
+        }
+      });
+  
+      if (isUntaggedEnabled) {
+        const untaggedGroup = materialGroups.get('untagged');
+        if (untaggedGroup) {
+          materialGroups.set('untagged', untaggedGroup.sort((a, b) => a.name.localeCompare(b.name)));
+        }
+      }
+  
+      // Combine all groups in order
+      const sortedMaterials: Material[] = [];
+      enabledTags.forEach(tag => {
+        sortedMaterials.push(...(materialGroups.get(tag) || []));
+      });
+      if (isUntaggedEnabled) {
+        sortedMaterials.push(...(materialGroups.get('untagged') || []));
+      }
+      sortedMaterials.push(...(materialGroups.get('remaining') || []));
+  
+      return sortedMaterials;
+    }, [data.sortSettings?.tagStates]);
+
+  // Update handleMaterialOrderChange for drag and drop
   const handleMaterialOrderChange = useCallback((result: any) => {
     if (!result.destination) return;
 
     setMaterials(prevMaterials => {
+      // First apply the manual movement
       const items = Array.from(prevMaterials);
       const [reorderedItem] = items.splice(result.source.index, 1);
       items.splice(result.destination.index, 0, reorderedItem);
 
-      // Create updated data and sync with parent
+      // Then apply auto-sort if enabled
+      const finalMaterials = isAutoSortEnabled 
+        ? sortMaterialsByCurrentSettings(items)
+        : items;
+
+      // Update parent data
       const updatedData: MaterialData = {
         ...data,
-        materials: items
+        materials: finalMaterials
       };
       onUpdate(updatedData);
 
-      return items;
+      return finalMaterials;
     });
-  }, [data, onUpdate]);
+  }, [data, isAutoSortEnabled, sortMaterialsByCurrentSettings, onUpdate]);
 
   const handleAddMaterialsClick = useCallback(() => {
     setIsAddMaterialDialogOpen(true);
@@ -101,6 +186,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsAddMeshDialogOpen(true);
   }, []);
 
+  // Update other handlers to properly handle auto-sort
   const handleAddMaterialSubmit = useCallback((materialNames: string) => {
     const newMaterialNames = materialNames.split(',').map(m => m.trim()).filter(m => m);
     
@@ -123,20 +209,24 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       setIsDuplicateDialogOpen(true);
     } else {
       setMaterials(prevMaterials => {
-        const updatedMaterials = [...prevMaterials, ...newMaterials];
+        const combinedMaterials = [...prevMaterials, ...newMaterials];
+        const sortedMaterials = isAutoSortEnabled 
+          ? sortMaterialsByCurrentSettings(combinedMaterials)
+          : combinedMaterials;
+
         const updatedData = {
           ...data,
-          materials: updatedMaterials
+          materials: sortedMaterials
         };
         safeUpdate(updatedData);
-        updateAllTags(updatedMaterials);
-        return updatedMaterials;
+        updateAllTags(sortedMaterials);
+        return sortedMaterials;
       });
     }
 
     setIsAddMaterialDialogOpen(false);
     setNewMaterialTags('');
-  }, [materials, newMaterialTags, data, safeUpdate, updateAllTags]);
+  }, [materials, newMaterialTags, data, safeUpdate, updateAllTags, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
   const handleAddMeshSubmit = useCallback((meshName: string) => {
     if (meshName && !meshAssignments[meshName]) {
@@ -230,27 +320,43 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [duplicateMaterials, updateAllTags]);
 
-  const handleSortMaterials = useCallback((sortedMaterials: Material[]) => {
+  // Update handleSortMaterials to include autoSortEnabled in settings
+  const handleSortMaterials = useCallback((sortedMaterials: Material[], sortSettings: TagSortState[]) => {
+    const updatedData: MaterialData = {
+      ...data,
+      materials: sortedMaterials,
+      sortSettings: {
+        tagStates: sortSettings,
+        timestamp: Date.now(),
+        autoSortEnabled: isAutoSortEnabled // Preserve auto-sort setting
+      }
+    };
+    
+    onUpdate(updatedData);
     setMaterials(sortedMaterials);
+  }, [data, isAutoSortEnabled, onUpdate]);
+
+  // Modify the material update functions to include auto-sorting
+  const updateMaterialsWithSort = useCallback((updatedMaterials: Material[]) => {
+    const finalMaterials = isAutoSortEnabled && data.sortSettings?.tagStates
+      ? sortMaterialsByCurrentSettings(updatedMaterials)
+      : updatedMaterials;
+
+    setMaterials(finalMaterials);
     const updatedData = {
       ...data,
-      materials: sortedMaterials
+      materials: finalMaterials
     };
     onUpdate(updatedData);
-  }, [data, onUpdate]);
+  }, [data, onUpdate, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
+  // Update existing handlers to use the new updateMaterialsWithSort function
   const handleRemoveMaterial = useCallback((materialName: string) => {
     setMaterials(prevMaterials => {
-      const updatedMaterials = prevMaterials.filter(m => m.name !== materialName);
-      updateAllTags(updatedMaterials);
-
-      const updatedData = {
-        ...data,
-        materials: updatedMaterials
-      };
-      onUpdate(updatedData);
-
-      return updatedMaterials;
+      const filteredMaterials = prevMaterials.filter(m => m.name !== materialName);
+      updateMaterialsWithSort(filteredMaterials);
+      updateAllTags(filteredMaterials);
+      return filteredMaterials;
     });
 
     setMeshAssignments(prev => {
@@ -259,61 +365,66 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         if (newAssignments[meshName].defaultMaterial === materialName) {
           newAssignments[meshName].defaultMaterial = '';
         }
-        newAssignments[meshName].variants = newAssignments[meshName].variants.filter(v => v.material !== materialName);
+        newAssignments[meshName].variants = newAssignments[meshName].variants
+          .filter(v => v.material !== materialName);
       });
       return newAssignments;
     });
-  }, [data, onUpdate, updateAllTags]);
+  }, [updateMaterialsWithSort, updateAllTags]);
 
-  const handleMoveMaterial = useCallback((fromIndex: number, toIndex: number) => {
+  const handleMoveMaterial = useCallback((index: number, direction: 'up' | 'down') => {
     setMaterials(prevMaterials => {
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      
+      // Check if move is valid
+      if (newIndex < 0 || newIndex >= prevMaterials.length) {
+        return prevMaterials;
+      }
+      
+      // First apply the manual movement
       const newMaterials = [...prevMaterials];
-      const [movedItem] = newMaterials.splice(fromIndex, 1);
-      newMaterials.splice(toIndex, 0, movedItem);
+      const [movedItem] = newMaterials.splice(index, 1);
+      newMaterials.splice(newIndex, 0, movedItem);
+      
+      // Then apply auto-sort if enabled
+      const finalMaterials = isAutoSortEnabled 
+        ? sortMaterialsByCurrentSettings(newMaterials)
+        : newMaterials;
       
       const updatedData: MaterialData = {
         ...data,
-        materials: newMaterials
+        materials: finalMaterials
       };
       safeUpdate(updatedData);
-      return newMaterials;
+      
+      return finalMaterials;
     });
-  }, [data, safeUpdate]);
-
+  }, [data, safeUpdate, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
   const handleEditTags = useCallback((materialName: string) => {
     setCurrentItemToTag(materialName);
     setIsTagDialogOpen(true);
   }, []);
 
-// Add this to the existing handleTagSubmit function:
-const handleTagSubmit = useCallback((newTags: string) => {
-  if (currentItemToTag) {
-    // Allow empty tags by trimming and filtering empty strings
-    const tagList = newTags.split(',')
-      .map(t => t.trim())
-      .filter(t => t.length > 0); // Only filter out completely empty tags
+  // Modify the handler for tag changes
+  const handleTagSubmit = useCallback((newTags: string) => {
+    if (currentItemToTag) {
+      const tagList = newTags.split(',')
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
 
-    setMaterials(prevMaterials => {
-      const updatedMaterials = prevMaterials.map(m =>
-        m.name === currentItemToTag ? { ...m, tags: tagList } : m
-      );
-      
-      // Update all tags
-      updateAllTags(updatedMaterials);
-      
-      // Update parent data
-      const updatedData = {
-        ...data,
-        materials: updatedMaterials
-      };
-      onUpdate(updatedData);
-      
-      return updatedMaterials;
-    });
-  }
-  setCurrentItemToTag(null);
-  setIsTagDialogOpen(false);
-}, [currentItemToTag, data, onUpdate, updateAllTags]);
+      setMaterials(prevMaterials => {
+        const updatedMaterials = prevMaterials.map(m =>
+          m.name === currentItemToTag ? { ...m, tags: tagList } : m
+        );
+        
+        updateAllTags(updatedMaterials);
+        updateMaterialsWithSort(updatedMaterials);
+        return updatedMaterials;
+      });
+    }
+    setCurrentItemToTag(null);
+    setIsTagDialogOpen(false);
+  }, [currentItemToTag, updateMaterialsWithSort, updateAllTags]);
 
   const onDragEnd = (result: any) => {
     if (!result.destination) {
@@ -330,6 +441,36 @@ const handleTagSubmit = useCallback((newTags: string) => {
   const handleSortMaterialsByName = () => {
     setMaterials(prevMaterials => [...prevMaterials].sort((a, b) => a.name.localeCompare(b.name)));
   };
+
+  // Add this effect to ensure MaterialSortDialog gets updated sortSettings
+  useEffect(() => {
+    if (isSortDialogOpen && data.sortSettings) {
+      const currentSettings = {
+        ...data.sortSettings,
+        autoSortEnabled: isAutoSortEnabled
+      };
+      // Update sort dialog state if needed
+    }
+  }, [isSortDialogOpen, data.sortSettings, isAutoSortEnabled]);
+
+  // Now we can define other handlers that use sortMaterialsByCurrentSettings
+  const handleAutoSortToggle = useCallback((enabled: boolean) => {
+    setIsAutoSortEnabled(enabled);
+    
+    const updatedData: MaterialData = {
+      ...data,
+      sortSettings: {
+        ...(data.sortSettings || { tagStates: [], timestamp: Date.now() }),
+        autoSortEnabled: enabled
+      }
+    };
+    
+    if (enabled && updatedData.sortSettings?.tagStates) {
+      updatedData.materials = sortMaterialsByCurrentSettings([...materials]);
+    }
+    
+    onUpdate(updatedData);
+  }, [data, materials, sortMaterialsByCurrentSettings, onUpdate]);
 
   // Update the auto-assign handler
   const handleAutoAssignTag = (meshName: string, selectedTag: string) => {
@@ -353,6 +494,50 @@ const handleTagSubmit = useCallback((newTags: string) => {
       });
       return Array.from(tags).sort();
     }, [materials]);
+
+  // Fix the material renaming handler
+  const handleRenameMaterial = useCallback((materialName: string) => {
+    setCurrentItemToRename(materialName);
+    setIsRenameDialogOpen(true);
+  }, []);
+
+  const handleRenameMaterialSubmit = useCallback((newName: string) => {
+    if (currentItemToRename && newName && newName !== currentItemToRename) {
+      setMaterials(prevMaterials => {
+        const updatedMaterials = prevMaterials.map(m =>
+          m.name === currentItemToRename ? { ...m, name: newName } : m
+        );
+        
+        const sortedMaterials = isAutoSortEnabled 
+          ? sortMaterialsByCurrentSettings(updatedMaterials)
+          : updatedMaterials;
+
+        const newMeshAssignments = { ...meshAssignments };
+        Object.keys(newMeshAssignments).forEach(meshName => {
+          const assignment = newMeshAssignments[meshName];
+          if (assignment.defaultMaterial === currentItemToRename) {
+            assignment.defaultMaterial = newName;
+          }
+          assignment.variants = assignment.variants.map(variant => ({
+            ...variant,
+            material: variant.material === currentItemToRename ? newName : variant.material
+          }));
+        });
+        setMeshAssignments(newMeshAssignments);
+
+        const updatedData: MaterialData = {
+          ...data,
+          materials: sortedMaterials,
+          meshAssignments: newMeshAssignments
+        };
+        onUpdate(updatedData);
+
+        return sortedMaterials;
+      });
+    }
+    setCurrentItemToRename(null);
+    setIsRenameDialogOpen(false);
+  }, [currentItemToRename, isAutoSortEnabled, sortMaterialsByCurrentSettings, meshAssignments, data, onUpdate]);
 
   const handleRenameMesh = useCallback((meshName: string) => {
     setCurrentItemToRename(meshName);
@@ -590,28 +775,37 @@ const handleTagSubmit = useCallback((newTags: string) => {
 
   
 
-  // Add this new function to handle tag removal:
-const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) => {
-  setMaterials(prevMaterials => {
-    const updatedMaterials = prevMaterials.map(m =>
-      m.name === materialName
-        ? { ...m, tags: m.tags.filter(tag => tag !== tagToRemove) }
-        : m
-    );
+  // Update the handleRemoveTag to properly handle auto-sort
+  const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) => {
+    setMaterials(prevMaterials => {
+      const updatedMaterials = prevMaterials.map(m =>
+        m.name === materialName
+          ? { ...m, tags: m.tags.filter(tag => tag !== tagToRemove) }
+          : m
+      );
 
-    // Update all tags
-    updateAllTags(updatedMaterials);
+      // Apply auto-sort if enabled
+      const sortedMaterials = isAutoSortEnabled 
+        ? sortMaterialsByCurrentSettings(updatedMaterials)
+        : updatedMaterials;
 
-    // Update parent data
-    const updatedData = {
-      ...data,
-      materials: updatedMaterials
-    };
-    onUpdate(updatedData);
+      // Update all tags
+      updateAllTags(sortedMaterials);
 
-    return updatedMaterials;
-  });
-}, [data, onUpdate, updateAllTags]);
+      // Update parent data
+      const updatedData = {
+        ...data,
+        materials: sortedMaterials,
+        sortSettings: {
+          ...(data.sortSettings || { tagStates: [], timestamp: Date.now() }),
+          autoSortEnabled: isAutoSortEnabled
+        }
+      };
+      onUpdate(updatedData);
+
+      return sortedMaterials;
+    });
+  }, [data, onUpdate, updateAllTags, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
   const handleSave = () => {
     const updatedData = {
@@ -653,16 +847,33 @@ const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) 
           </Button>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-2">
+        {/* Action Buttons with updated auto-sort toggle */}
+        <div className="flex items-center gap-4">
           {activeSection === 'materials' && (
-            <Button 
-              onClick={() => setIsSortDialogOpen(true)}
-              size="sm"
-              variant="outline"
-            >
-              Sort Materials
-            </Button>
+            <>
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Switch
+                      checked={isAutoSortEnabled}
+                      onCheckedChange={handleAutoSortToggle}
+                      className="data-[state=checked]:bg-blue-500"
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Auto-sort materials based on tag settings
+                  </TooltipContent>
+                </Tooltip>
+                <span className="text-sm text-gray-500">Auto-sort</span>
+              </div>
+              <Button 
+                onClick={() => setIsSortDialogOpen(true)}
+                size="sm"
+                variant="outline"
+              >
+                Sort Materials
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -682,7 +893,8 @@ const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) 
               }}
               onRemoveMaterial={handleRemoveMaterial}
               onMoveMaterial={handleMoveMaterial}
-              onRemoveTag={handleRemoveTag}  // Add this line
+              onRemoveTag={handleRemoveTag}
+              isAutoSortEnabled={isAutoSortEnabled} // Add this prop
             />
           )}
           {activeSection === 'meshes' && (
@@ -732,6 +944,7 @@ const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) 
         onClose={() => setIsSortDialogOpen(false)}
         materials={materials}
         onApplySort={handleSortMaterials}
+        currentData={data}
       />
 
       <DuplicateMaterialDialog
@@ -741,10 +954,14 @@ const handleRemoveTag = useCallback((materialName: string, tagToRemove: string) 
         duplicateMaterials={duplicateMaterials}
       />
 
+      {/* Update the InputDialog for renaming */}
       <InputDialog
         isOpen={isRenameDialogOpen}
-        onClose={() => setIsRenameDialogOpen(false)}
-        onSubmit={handleRenameSubmit}
+        onClose={() => {
+          setIsRenameDialogOpen(false);
+          setCurrentItemToRename(null);
+        }}
+        onSubmit={handleRenameMaterialSubmit}
         title={`Rename ${currentItemToRename ? 'Material' : 'Mesh'}`}
         initialValue={currentItemToRename || ''}
       />

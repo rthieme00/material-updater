@@ -10,110 +10,82 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-
-interface Material {
-  name: string;
-  tags: string[];
-}
-
-interface TagState {
-  name: string;
-  enabled: boolean;
-}
-
-const STORAGE_KEY = 'materialSortSettings';
-
-interface MaterialSortSettings {
-  tagStates: TagState[];
-  timestamp: number;
-}
+import { Material, MaterialData, TagSortState } from '@/gltf/gltfTypes';
 
 interface MaterialSortDialogProps {
   isOpen: boolean;
   onClose: () => void;
   materials: Material[];
-  onApplySort: (sortedMaterials: Material[]) => void;
+  onApplySort: (sortedMaterials: Material[], sortSettings: TagSortState[]) => void;
+  currentData: MaterialData;
 }
 
 export default function MaterialSortDialog({
   isOpen,
   onClose,
   materials,
-  onApplySort
+  onApplySort,
+  currentData
 }: MaterialSortDialogProps) {
-  const [tagStates, setTagStates] = useState<TagState[]>([]);
+  const [tagStates, setTagStates] = useState<TagSortState[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [previewMaterials, setPreviewMaterials] = useState<Material[]>([]);
 
-  // Load saved settings and initialize tag states
+  // Initialize tag states from currentData or create new ones
   useEffect(() => {
     if (isOpen) {
       const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
-      
-      // Try to load saved settings
-      const savedSettings = localStorage.getItem(STORAGE_KEY);
-      let initialTagStates: TagState[] = [];
+      let initialTagStates: TagSortState[] = [];
 
-      if (savedSettings) {
-        try {
-          const parsed: MaterialSortSettings = JSON.parse(savedSettings);
-          const savedTagStates = parsed.tagStates;
+      if (currentData.sortSettings?.tagStates) {
+        // Use existing sort settings
+        const savedTagStates = currentData.sortSettings.tagStates;
+        const savedTagStateMap = new Map(
+          savedTagStates.map(tag => [tag.name, tag])
+        );
 
-          // Create a map of saved tag states
-          const savedTagStateMap = new Map(
-            savedTagStates.map(tag => [tag.name, tag])
-          );
-
-          // Initialize tags with saved states or defaults for new tags
-          initialTagStates = uniqueTags
-            .map(tag => ({
-              name: tag,
-              enabled: savedTagStateMap.get(tag)?.enabled ?? true
-            }));
-
-          // Add any saved tags that still exist
-          savedTagStates.forEach(savedTag => {
-            if (!initialTagStates.some(t => t.name === savedTag.name) && 
-                savedTag.name === 'Untagged') {
-              initialTagStates.push(savedTag);
-            }
-          });
-        } catch (error) {
-          console.error('Error loading saved sort settings:', error);
-          // Fall back to default initialization
-          initialTagStates = uniqueTags
-            .sort()
-            .map(tag => ({ name: tag, enabled: true }));
-        }
-      } else {
-        // No saved settings, use default initialization
+        // Initialize tags with saved states or defaults for new tags
         initialTagStates = uniqueTags
-          .sort()
-          .map(tag => ({ name: tag, enabled: true }));
+          .map(tag => ({
+            name: tag,
+            enabled: savedTagStateMap.get(tag)?.enabled ?? true,
+            order: savedTagStateMap.get(tag)?.order ?? uniqueTags.indexOf(tag)
+          }));
+
+        // Add any saved tags that still exist
+        savedTagStates.forEach(savedTag => {
+          if (!initialTagStates.some(t => t.name === savedTag.name) && 
+              savedTag.name === 'Untagged') {
+            initialTagStates.push(savedTag);
+          }
+        });
+      } else {
+        // Create new tag states
+        initialTagStates = uniqueTags
+          .map((tag, index) => ({
+            name: tag,
+            enabled: true,
+            order: index
+          }));
       }
 
       // Ensure 'Untagged' is always present
       if (!initialTagStates.some(tag => tag.name === 'Untagged')) {
-        initialTagStates.push({ name: 'Untagged', enabled: true });
+        initialTagStates.push({
+          name: 'Untagged',
+          enabled: true,
+          order: initialTagStates.length
+        });
       }
 
+      // Sort by saved order
+      initialTagStates.sort((a, b) => a.order - b.order);
       setTagStates(initialTagStates);
       setPreviewMaterials([...materials]);
     }
-  }, [isOpen, materials]);
+  }, [isOpen, materials, currentData]);
 
-  // Save settings whenever tag states change
-  useEffect(() => {
-    if (tagStates.length > 0) {
-      const settings: MaterialSortSettings = {
-        tagStates,
-        timestamp: Date.now()
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    }
-  }, [tagStates]);
-
-  const sortMaterialsByTags = useCallback((currentTagStates: TagState[]) => {
+  const sortMaterialsByTags = useCallback((currentTagStates: TagSortState[]) => {
     // Include all tags in order, not just enabled ones
     const tagOrder = currentTagStates
       .filter(tag => tag.name !== 'Untagged')
@@ -204,20 +176,31 @@ export default function MaterialSortDialog({
 
   const handleDragEnd = useCallback((result: any) => {
     if (!result.destination) return;
+    
+    // Don't allow moving Untagged tag
+    const draggedTag = tagStates[result.source.index];
+    const targetIndex = result.destination.index;
+    if (draggedTag.name === 'Untagged' || tagStates[targetIndex].name === 'Untagged') {
+      return;
+    }
 
-    setPreviewMaterials(prev => {
+    setTagStates(prev => {
       const items = Array.from(prev);
       const [reorderedItem] = items.splice(result.source.index, 1);
       items.splice(result.destination.index, 0, reorderedItem);
-      return items;
+      
+      // Update order values
+      return items.map((tag, idx) => ({
+        ...tag,
+        order: idx
+      }));
     });
-  }, []);
+  }, [tagStates]);
 
   const toggleTag = (tagName: string) => {
-    const newTagStates = tagStates.map(tag => 
+    setTagStates(prev => prev.map(tag =>
       tag.name === tagName ? { ...tag, enabled: !tag.enabled } : tag
-    );
-    setTagStates(newTagStates);
+    ));
   };
 
   const moveTag = (index: number, direction: 'up' | 'down') => {
@@ -228,25 +211,45 @@ export default function MaterialSortDialog({
     if (newIndex < 0 || newIndex >= tagStates.length) return;
     if (tagStates[newIndex].name === 'Untagged') return;
     
-    const newTagStates = [...tagStates];
-    [newTagStates[index], newTagStates[newIndex]] = [newTagStates[newIndex], newTagStates[index]];
-    
-    setTagStates(newTagStates);
+    setTagStates(prev => {
+      const newTagStates = [...prev];
+      [newTagStates[index], newTagStates[newIndex]] = [newTagStates[newIndex], newTagStates[index]];
+      
+      // Update order values
+      return newTagStates.map((tag, idx) => ({
+        ...tag,
+        order: idx
+      }));
+    });
   };
 
-  // Reset button handler
   const handleResetSettings = () => {
-    localStorage.removeItem(STORAGE_KEY);
     const uniqueTags = Array.from(new Set(materials.flatMap(m => m.tags)));
     const resetTagStates = uniqueTags
-      .sort()
-      .map(tag => ({ name: tag, enabled: true }));
-    resetTagStates.push({ name: 'Untagged', enabled: true });
+      .map((tag, index) => ({
+        name: tag,
+        enabled: true,
+        order: index
+      }));
+    
+    // Add Untagged at the end
+    resetTagStates.push({
+      name: 'Untagged',
+      enabled: true,
+      order: resetTagStates.length
+    });
+    
     setTagStates(resetTagStates);
   };
 
   const handleApply = () => {
-    onApplySort(previewMaterials);
+    // Update tag states with current order
+    const updatedTagStates = tagStates.map((tag, index) => ({
+      ...tag,
+      order: index
+    }));
+
+    onApplySort(previewMaterials, updatedTagStates);
     onClose();
   };
 
@@ -261,7 +264,7 @@ export default function MaterialSortDialog({
         <DialogHeader className="pb-4">
           <DialogTitle>Sort Materials by Tag Priority</DialogTitle>
           <DialogDescription>
-            Drag materials to reorder them manually, or use tag priorities to automatically sort them.
+            Drag tags to reorder their priority or use the arrow buttons. Toggle switches to enable/disable sorting.
           </DialogDescription>
         </DialogHeader>
         
@@ -270,54 +273,104 @@ export default function MaterialSortDialog({
             <div className="space-y-2">
               <h3 className="text-sm font-medium">Tag Priority Order</h3>
               <p className="text-sm text-muted-foreground">
-                Drag tags or use arrow buttons to set priority. Toggle switches to enable/disable sorting.
+                Higher priority tags will be processed first when sorting materials.
               </p>
             </div>
 
-            <div className="space-y-2">
-              {tagStates.map((tag, index) => (
-                <div
-                  key={tag.name}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-lg border",
-                    !tag.enabled && "opacity-50"
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium">{tag.name}</span>
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <Droppable droppableId="tags">
+                {(provided) => (
+                  <div
+                    {...provided.droppableProps}
+                    ref={provided.innerRef}
+                    className="space-y-2"
+                  >
+                    {tagStates.map((tag, index) => (
+                      <Draggable
+                        key={tag.name}
+                        draggableId={tag.name}
+                        index={index}
+                        isDragDisabled={tag.name === 'Untagged'}
+                      >
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            className={cn(
+                              "flex items-center justify-between p-3 rounded-lg border",
+                              !tag.enabled && "opacity-50",
+                              snapshot.isDragging && "shadow-lg bg-accent",
+                              tag.name === 'Untagged' && "cursor-not-allowed"
+                            )}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                {...provided.dragHandleProps}
+                                className={cn(
+                                  "p-2 rounded cursor-grab active:cursor-grabbing",
+                                  "hover:bg-accent",
+                                  tag.name === 'Untagged' && "cursor-not-allowed"
+                                )}
+                              >
+                                <svg
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  className="text-muted-foreground"
+                                >
+                                  <path d="M4 8C4 8.55228 3.55228 9 3 9C2.44772 9 2 8.55228 2 8C2 7.44772 2.44772 7 3 7C3.55228 7 4 7.44772 4 8Z" fill="currentColor"/>
+                                  <path d="M9 8C9 8.55228 8.55228 9 8 9C7.44772 9 7 8.55228 7 8C7 7.44772 7.44772 7 8 7C8.55228 7 9 7.44772 9 8Z" fill="currentColor"/>
+                                  <path d="M14 8C14 8.55228 13.5523 9 13 9C12.4477 9 12 8.55228 12 8C12 7.44772 12.4477 7 13 7C13.5523 7 14 7.44772 14 8Z" fill="currentColor"/>
+                                  <path d="M4 3C4 3.55228 3.55228 4 3 4C2.44772 4 2 3.55228 2 3C2 2.44772 2.44772 2 3 2C3.55228 2 4 2.44772 4 3Z" fill="currentColor"/>
+                                  <path d="M9 3C9 3.55228 8.55228 4 8 4C7.44772 4 7 3.55228 7 3C7 2.44772 7.44772 2 8 2C8.55228 2 9 2.44772 9 3Z" fill="currentColor"/>
+                                  <path d="M14 3C14 3.55228 13.5523 4 13 4C12.4477 4 12 3.55228 12 3C12 2.44772 12.4477 2 13 2C13.5523 2 14 2.44772 14 3Z" fill="currentColor"/>
+                                  <path d="M4 13C4 13.5523 3.55228 14 3 14C2.44772 14 2 13.5523 2 13C2 12.4477 2.44772 12 3 12C3.55228 12 4 12.4477 4 13Z" fill="currentColor"/>
+                                  <path d="M9 13C9 13.5523 8.55228 14 8 14C7.44772 14 7 13.5523 7 13C7 12.4477 7.44772 12 8 12C8.55228 12 9 12.4477 9 13Z" fill="currentColor"/>
+                                  <path d="M14 13C14 13.5523 13.5523 14 13 14C12.4477 14 12 13.5523 12 13C12 12.4477 12.4477 12 13 12C13.5523 12 14 12.4477 14 13Z" fill="currentColor"/>
+                                </svg>
+                              </div>
+                              <span className="font-medium">{tag.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {tag.name !== 'Untagged' && (
+                                <div className="flex flex-col">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2"
+                                    onClick={() => moveTag(index, 'up')}
+                                    disabled={index === 0}
+                                  >
+                                    <ChevronUp className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2"
+                                    onClick={() => moveTag(index, 'down')}
+                                    disabled={index === tagStates.length - 2}
+                                  >
+                                    <ChevronDown className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              )}
+                              <Switch
+                                checked={tag.enabled}
+                                onCheckedChange={() => toggleTag(tag.name)}
+                                className="ml-2"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </Draggable>
+                    ))}
+                    {provided.placeholder}
                   </div>
-                  <div className="flex items-center gap-2">
-                    {tag.name !== 'Untagged' && (
-                      <div className="flex flex-col">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2"
-                          onClick={() => moveTag(index, 'up')}
-                          disabled={index === 0}
-                        >
-                          <ChevronUp className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2"
-                          onClick={() => moveTag(index, 'down')}
-                          disabled={index === tagStates.length - 2}
-                        >
-                          <ChevronDown className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    )}
-                    <Switch
-                      checked={tag.enabled}
-                      onCheckedChange={() => toggleTag(tag.name)}
-                      className="ml-2"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                )}
+              </Droppable>
+            </DragDropContext>
 
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -330,70 +383,40 @@ export default function MaterialSortDialog({
                 />
               </div>
               
-              <DragDropContext onDragEnd={handleDragEnd}>
-                <Droppable droppableId="materials">
-                  {(provided) => (
-                    <div
-                      {...provided.droppableProps}
-                      ref={provided.innerRef}
-                      className="space-y-2"
-                    >
-                      {filteredMaterials.map((material, index) => (
-                        <Draggable
-                          key={material.name}
-                          draggableId={material.name}
-                          index={index}
-                        >
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={cn(
-                                "flex flex-col gap-1 p-3 rounded-lg border",
-                                "bg-white dark:bg-gray-800",
-                                "cursor-grab active:cursor-grabbing",
-                                "transition-all duration-200",
-                                snapshot.isDragging && [
-                                  "shadow-lg",
-                                  "z-50",
-                                  "!transform-none",
-                                  "opacity-95",
-                                  "[&_*]:pointer-events-none"
-                                ]
-                              )}
-                            >
-                              <span className="font-medium">{material.name}</span>
-                              <div className="flex flex-wrap gap-1">
-                                {material.tags.length === 0 ? (
-                                  <Badge variant="secondary" className="opacity-50">
-                                    Untagged
-                                  </Badge>
-                                ) : (
-                                  material.tags.map(tag => (
-                                    <Badge
-                                      key={tag}
-                                      variant="secondary"
-                                      className={
-                                        tagStates.find(t => t.name === tag)?.enabled
-                                          ? 'opacity-100'
-                                          : 'opacity-50'
-                                      }
-                                    >
-                                      {tag}
-                                    </Badge>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {provided.placeholder}
+              <div className="space-y-2">
+                {filteredMaterials.map((material, index) => (
+                  <div
+                    key={material.name}
+                    className={cn(
+                      "flex flex-col gap-1 p-3 rounded-lg border",
+                      "bg-white dark:bg-gray-800"
+                    )}
+                  >
+                    <span className="font-medium">{material.name}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {material.tags.length === 0 ? (
+                        <Badge variant="secondary" className="opacity-50">
+                          Untagged
+                        </Badge>
+                      ) : (
+                        material.tags.map(tag => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className={
+                              tagStates.find(t => t.name === tag)?.enabled
+                                ? 'opacity-100'
+                                : 'opacity-50'
+                            }
+                          >
+                            {tag}
+                          </Badge>
+                        ))
+                      )}
                     </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </ScrollArea>

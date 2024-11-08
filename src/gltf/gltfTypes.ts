@@ -1,5 +1,17 @@
 // src/gltf/gltfTypes.ts
 
+export interface TagSortState {
+  name: string;
+  enabled: boolean;
+  order: number;
+}
+
+export interface MaterialSortSettings {
+  tagStates: TagSortState[];
+  timestamp: number;
+  autoSortEnabled: boolean; // Add this field
+}
+
 export interface Material {
   name: string;
   tags: string[];
@@ -19,6 +31,7 @@ export interface MaterialData {
   materials: Material[];
   meshAssignments: { [meshName: string]: MeshAssignment };
   models?: { [modelName: string]: string[] };
+  sortSettings?: MaterialSortSettings;  // Added this field
 }
 
 export interface GltfImage {

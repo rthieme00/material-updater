@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import MaterialItem from './MaterialItem';
 import { Plus } from 'lucide-react';
 import { Card } from "@/components/ui/card";
-import { Material } from '@/gltf/gltfTypes'; // Added this import
+import { Material } from '@/gltf/gltfTypes';
 
 interface MaterialsSectionProps {
   materials: Material[];
@@ -15,8 +15,9 @@ interface MaterialsSectionProps {
   onEditTags: (name: string) => void;
   onRenameMaterial: (name: string) => void;
   onRemoveMaterial: (name: string) => void;
-  onMoveMaterial: (fromIndex: number, toIndex: number) => void;
+  onMoveMaterial: (index: number, direction: 'up' | 'down') => void; // Updated to match MaterialItem
   onRemoveTag: (materialName: string, tag: string) => void;
+  isAutoSortEnabled: boolean;
 }
 
 const MaterialsSection: React.FC<MaterialsSectionProps> = ({
@@ -27,12 +28,14 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
   onRenameMaterial,
   onRemoveMaterial,
   onMoveMaterial,
-  onRemoveTag
+  onRemoveTag,
+  isAutoSortEnabled
 }) => {
+  // Create a wrapper function to handle material movement
   const handleMoveMaterial = (index: number, direction: 'up' | 'down') => {
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex >= 0 && newIndex < materials.length) {
-      onMoveMaterial(index, newIndex);
+      onMoveMaterial(index, direction);
     }
   };
 
@@ -40,7 +43,7 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
     <Card className="p-6 bg-gray-50 dark:bg-gray-900 border-none shadow-none">
       <div className="space-y-6">
         <DragDropContext onDragEnd={onDragEnd}>
-          <Droppable droppableId="materials">
+          <Droppable droppableId="materials" isDropDisabled={isAutoSortEnabled}>
             {(provided) => (
               <ul 
                 {...provided.droppableProps} 
@@ -48,7 +51,12 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
                 className="space-y-3 min-h-[200px]"
               >
                 {materials.map((material, index) => (
-                  <Draggable key={material.name} draggableId={material.name} index={index}>
+                  <Draggable 
+                    key={material.name} 
+                    draggableId={material.name} 
+                    index={index}
+                    isDragDisabled={isAutoSortEnabled}
+                  >
                     {(provided) => (
                       <MaterialItem
                         material={material}
@@ -58,8 +66,9 @@ const MaterialsSection: React.FC<MaterialsSectionProps> = ({
                         onRenameMaterial={onRenameMaterial}
                         onRemoveMaterial={onRemoveMaterial}
                         onMoveMaterial={handleMoveMaterial}
-                        onRemoveTag={onRemoveTag}  // Add this line
+                        onRemoveTag={onRemoveTag}
                         provided={provided}
+                        isAutoSortEnabled={isAutoSortEnabled}
                       />
                     )}
                   </Draggable>
