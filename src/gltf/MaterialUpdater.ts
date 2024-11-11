@@ -3,6 +3,14 @@
 import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage, MeshAssignment } from '@/gltf/gltfTypes';
 import { cloneDeep } from 'lodash';
 
+// First, define some helper interfaces for AO assets
+interface AOAssets {
+  aoImages: GltfImage[];
+  aoTextures: GltfTexture[];
+  aoImageIndices: number[];
+  aoTextureIndices: number[];
+}
+
 // Helper function to create a mapping between old and new material indices
 function createMaterialIndexMapping(
   oldMaterials: GltfMaterial[],
@@ -18,7 +26,7 @@ function createMaterialIndexMapping(
   return mapping;
 }
 
-// Helper function to check if a texture is an AO texture by name
+// Helper function to check for AO texture
 function isAOTexture(texture: GltfTexture | undefined, images: GltfImage[]): boolean {
   if (!texture || texture.source === undefined) return false;
   if (!Array.isArray(images) || !images[texture.source]) return false;
@@ -486,40 +494,34 @@ function reorganizeAssetsForAO(targetData: GltfData): {
   };
 }
 
-// Helper function to get AO textures from target data
-function getAOAssetsFromTarget(targetData: GltfData): {
-  aoImages: GltfImage[];
-  aoTextures: GltfTexture[];
-  aoImageIndices: number[];
-  aoTextureIndices: number[];
-} {
-  const aoImageIndices: number[] = [];
-  const aoTextureIndices: number[] = [];
-  const aoImages: GltfImage[] = [];
-  const aoTextures: GltfTexture[] = [];
+// Helper function to get AO assets from target
+function getAOAssetsFromTarget(targetData: GltfData): AOAssets {
+  const aoAssets: AOAssets = {
+    aoImages: [],
+    aoTextures: [],
+    aoImageIndices: [],
+    aoTextureIndices: []
+  };
 
   targetData.textures?.forEach((texture, textureIndex) => {
     if (texture.source !== undefined && 
         targetData.images?.[texture.source]?.name?.endsWith('_AO')) {
-      aoImageIndices.push(texture.source);
-      aoTextureIndices.push(textureIndex);
+      aoAssets.aoImageIndices.push(texture.source);
+      aoAssets.aoTextureIndices.push(textureIndex);
       if (targetData.images) {
-        aoImages.push(targetData.images[texture.source]);
-        aoTextures.push(texture);
+        aoAssets.aoImages.push(targetData.images[texture.source]);
+        aoAssets.aoTextures.push(texture);
       }
     }
   });
 
-  return { aoImages, aoTextures, aoImageIndices, aoTextureIndices };
+  return aoAssets;
 }
 
-// Helper function to merge reference and target assets
+// Helper function to merge assets
 function mergeAssets(
   referenceData: GltfData,
-  targetAOAssets: {
-    aoImages: GltfImage[];
-    aoTextures: GltfTexture[];
-  }
+  targetData: GltfData
 ): {
   mergedImages: GltfImage[];
   mergedTextures: GltfTexture[];
@@ -531,25 +533,45 @@ function mergeAssets(
   const imageIndexMap = new Map<number, number>();
   const textureIndexMap = new Map<number, number>();
 
-  // First, add AO images and textures from target
-  targetAOAssets.aoImages.forEach((image, index) => {
+  // Get AO assets from target
+  const aoAssets = getAOAssetsFromTarget(targetData);
+
+  // Add target AO images first
+  aoAssets.aoImages.forEach((image, index) => {
+    const newIndex = mergedImages.length;
+    imageIndexMap.set(aoAssets.aoImageIndices[index], newIndex);
     mergedImages.push(image);
   });
 
-  targetAOAssets.aoTextures.forEach((texture, index) => {
-    // Adjust texture source to match new image index
-    const newTexture = { ...texture, source: index };
+  // Add target AO textures
+  aoAssets.aoTextures.forEach((texture, index) => {
+    const newTexture = { ...texture };
+    if (newTexture.source !== undefined) {
+      newTexture.source = imageIndexMap.get(texture.source) ?? texture.source;
+    }
+    const newIndex = mergedTextures.length;
+    textureIndexMap.set(aoAssets.aoTextureIndices[index], newIndex);
     mergedTextures.push(newTexture);
   });
 
-  // Then add reference images and textures
+  // Add reference images (excluding AO images)
   referenceData.images?.forEach((image, oldIndex) => {
+    // Skip reference AO images
+    if (image.name?.endsWith('_AO')) return;
+    
     const newIndex = mergedImages.length;
     imageIndexMap.set(oldIndex, newIndex);
     mergedImages.push(image);
   });
 
+  // Add reference textures (excluding AO textures)
   referenceData.textures?.forEach((texture, oldIndex) => {
+    // Skip reference AO textures
+    if (texture.source !== undefined && 
+        referenceData.images?.[texture.source]?.name?.endsWith('_AO')) {
+      return;
+    }
+
     const newTexture = { ...texture };
     if (newTexture.source !== undefined) {
       newTexture.source = imageIndexMap.get(newTexture.source) ?? newTexture.source;
@@ -565,6 +587,51 @@ function mergeAssets(
     imageIndexMap,
     textureIndexMap
   };
+}
+
+// Update material texture references function
+function updateMaterialTextureRefs(
+  material: GltfMaterial,
+  textureIndexMap: Map<number, number>,
+  targetData: GltfData,
+  mergedTextures: GltfTexture[],
+  mergedImages: GltfImage[]
+): void {
+  const updateTextureRef = (textureRef: any) => {
+    if (!textureRef || textureRef.index === undefined) return;
+
+    // If this is referencing an AO texture in the target, find the corresponding new AO texture
+    const isTargetAO = textureRef.index !== undefined && 
+                      targetData.textures && 
+                      isAOTexture(targetData.textures[textureRef.index], targetData.images || []);
+
+    if (isTargetAO) {
+      // Find the new AO texture index in merged textures
+      const newAOIndex = mergedTextures.findIndex(tex => 
+        tex.source !== undefined && 
+        mergedImages[tex.source]?.name?.endsWith('_AO')
+      );
+      if (newAOIndex !== -1) {
+        textureRef.index = newAOIndex;
+        return;
+      }
+    }
+
+    // For non-AO textures, use the regular mapping
+    textureRef.index = textureIndexMap.get(textureRef.index) ?? textureRef.index;
+  };
+
+  if (material.pbrMetallicRoughness) {
+    updateTextureRef(material.pbrMetallicRoughness.baseColorTexture);
+    updateTextureRef(material.pbrMetallicRoughness.metallicRoughnessTexture);
+  }
+  updateTextureRef(material.normalTexture);
+  updateTextureRef(material.occlusionTexture);
+  updateTextureRef(material.emissiveTexture);
+  if (material.extensions?.KHR_materials_sheen) {
+    updateTextureRef(material.extensions.KHR_materials_sheen.sheenColorTexture);
+    updateTextureRef(material.extensions.KHR_materials_sheen.sheenRoughnessTexture);
+  }
 }
 
 export async function updateMaterials(
@@ -601,10 +668,7 @@ export async function updateMaterials(
       mergedTextures,
       imageIndexMap,
       textureIndexMap
-    } = mergeAssets(referenceData, {
-      aoImages: aoAssets.aoImages,
-      aoTextures: aoAssets.aoTextures
-    });
+    } = mergeAssets(referenceData, targetData);
 
     // Update target data with merged assets
     targetData.images = mergedImages;
