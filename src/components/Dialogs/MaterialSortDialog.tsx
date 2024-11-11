@@ -264,7 +264,7 @@ export default function MaterialSortDialog({
         <DialogHeader className="pb-4">
           <DialogTitle>Sort Materials by Tag Priority</DialogTitle>
           <DialogDescription>
-            Drag tags to reorder their priority or use the arrow buttons. Toggle switches to enable/disable sorting.
+            Drag tags to reorder their priority or use the arrow buttons. Toggle switches to enable/disable alphabet sorting in the tag.
           </DialogDescription>
         </DialogHeader>
         

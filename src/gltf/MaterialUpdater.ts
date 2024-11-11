@@ -108,10 +108,10 @@ function handleAOTextures(
   };
 }
 
-// Helper function to update material indices in variant mappings
+// Update the mapping function to handle both string and number indices
 function updateVariantMappings(
   primitive: any,
-  materialIndexMapping: Map<number, number>
+  materialIndexMapping: Map<number | string, number>
 ) {
   if (primitive.extensions?.KHR_materials_variants?.mappings) {
     primitive.extensions.KHR_materials_variants.mappings = 
@@ -410,6 +410,15 @@ export async function updateMaterials(
   }
 
   try {
+    // Initialize arrays if they don't exist in target data
+    targetData.materials = targetData.materials || [];
+    targetData.textures = targetData.textures || [];
+    targetData.images = targetData.images || [];
+    targetData.samplers = targetData.samplers || [];
+    targetData.meshes = targetData.meshes || [];
+    targetData.extensionsUsed = targetData.extensionsUsed || [];
+    targetData.extensionsRequired = targetData.extensionsRequired || [];
+
     // Handle AO texture replacement
     const {
       updatedTextures,
@@ -418,15 +427,13 @@ export async function updateMaterials(
     } = handleAOTextures(targetData, referenceData);
 
     // Copy extensions from reference
-    targetData.extensions = referenceData.extensions;
-    targetData.extensionsRequired = referenceData.extensionsRequired;
-    targetData.extensionsUsed = referenceData.extensionsUsed;
+    targetData.extensions = referenceData.extensions || {};
 
     progressCallback(0.2);
 
     // Create ordered materials array based on materialData
     const orderedMaterials: GltfMaterial[] = [];
-    const materialNameToNewIndex = new Map<string, number>();
+    const materialNameToNewIndex = new Map<string | number, number>();
 
     // Add materials in the order specified in materialData
     materialData.materials.forEach((jsonMaterial, index) => {
@@ -439,36 +446,36 @@ export async function updateMaterials(
     });
 
     // Add remaining materials from reference
-    referenceData.materials.forEach(material => {
+    referenceData.materials.forEach((material, oldIndex) => {
       if (!materialNameToNewIndex.has(material.name)) {
         materialNameToNewIndex.set(material.name, orderedMaterials.length);
+        // Also store the numeric index mapping
+        materialNameToNewIndex.set(oldIndex, orderedMaterials.length);
         orderedMaterials.push(cloneDeep(material));
-      }
-    });
-
-    // Create mapping from old indices to new indices
-    const materialIndexMapping = new Map<number, number>();
-    referenceData.materials.forEach((material, oldIndex) => {
-      const newIndex = materialNameToNewIndex.get(material.name);
-      if (newIndex !== undefined) {
-        materialIndexMapping.set(oldIndex, newIndex);
       }
     });
 
     progressCallback(0.4);
 
     // Update material references in meshes
-    targetData.meshes.forEach(mesh => {
-      mesh.primitives.forEach(primitive => {
-        if (primitive.material !== undefined) {
-          const newIndex = materialIndexMapping.get(primitive.material);
-          if (newIndex !== undefined) {
-            primitive.material = newIndex;
-          }
+    if (targetData.meshes && targetData.meshes.length > 0) {
+      targetData.meshes.forEach(mesh => {
+        if (mesh.primitives) {
+          mesh.primitives.forEach(primitive => {
+            if (primitive.material !== undefined) {
+              // Try to get the new index using either the number or string mapping
+              const newIndex = materialNameToNewIndex.get(primitive.material);
+              if (newIndex !== undefined) {
+                primitive.material = newIndex;
+              }
+            }
+            if (primitive.extensions?.KHR_materials_variants) {
+              updateVariantMappings(primitive, materialNameToNewIndex);
+            }
+          });
         }
-        updateVariantMappings(primitive, materialIndexMapping);
       });
-    });
+    }
 
     // Assign the updated assets
     targetData.materials = orderedMaterials;
