@@ -14,6 +14,7 @@ import { debounce } from 'lodash';
 import { MaterialData, Material, MeshAssignment, Variant, TagSortState } from '@/gltf/gltfTypes';
 import { ScrollArea } from '../ui/scroll-area';
 import PreviewVariantsSection from './PreviewVariantsSection';
+import ExtractVariantsButton from './ExtractVariantsButton';
 
 interface MaterialMeshEditorProps {
   data: MaterialData;
@@ -886,6 +887,12 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
                 Sort Materials
               </Button>
             </>
+          )}
+          {activeSection === 'variants' && (
+            <ExtractVariantsButton 
+              meshAssignments={meshAssignments}
+              variant="default"
+            />
           )}
         </div>
       </div>
