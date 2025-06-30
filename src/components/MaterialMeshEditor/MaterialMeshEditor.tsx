@@ -478,28 +478,28 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   // Modified effect to handle auto-tag updates more efficiently
   useEffect(() => {
     if (!materials.length) return;
-
+  
     const autoTaggedMeshes = autoTagAssignments.filter(([_, assignment]) => 
       assignment.autoTag?.enabled && assignment.autoTag.tag
     );
-
+  
     if (autoTaggedMeshes.length === 0) return;
-
+  
     const updates: { [key: string]: typeof meshAssignments[string] } = {};
     let hasChanges = false;
-
+  
     autoTaggedMeshes.forEach(([meshName, assignment]) => {
       const tag = assignment.autoTag?.tag;
       if (!tag) return;
-
+  
       const taggedMaterials = materials.filter(m => m.tags.includes(tag));
       if (taggedMaterials.length === 0) return;
-
+  
       const newVariants = taggedMaterials.map(m => ({ 
         name: m.name, 
         material: m.name 
       }));
-
+  
       if (JSON.stringify(assignment.variants) !== JSON.stringify(newVariants)) {
         hasChanges = true;
         updates[meshName] = {
@@ -508,13 +508,13 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         };
       }
     });
-
+  
     if (hasChanges) {
       setMeshAssignments(prev => ({
         ...prev,
         ...updates
       }));
-
+  
       const updatedData = {
         ...data,
         materials,
@@ -523,13 +523,13 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           ...updates
         }
       };
-
+  
       // Batch update using requestAnimationFrame
       requestAnimationFrame(() => {
         safeUpdate(updatedData);
       });
     }
-  }, [materials, autoTagAssignments, data, safeUpdate]);
+  }, [materials, autoTagAssignments, data, safeUpdate, meshAssignments]);
 
   useEffect(() => {
     try {

@@ -77,10 +77,10 @@ export default function SetFilenamesModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
-            Set Filenames for "{groupName}"
+            Set Filenames for &ldquo;{groupName}&rdquo;
           </DialogTitle>
           <DialogDescription>
-            Enter filenames that should use this group's mesh assignments. 
+            Enter filenames that should use this group&apos;s mesh assignments. 
             One filename per line. File extensions are optional.
           </DialogDescription>
         </DialogHeader>

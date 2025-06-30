@@ -162,9 +162,12 @@ const MeshItem: React.FC<MeshItemProps> = ({
   // Cleanup timeouts on unmount
   React.useEffect(() => {
     return () => {
-      Object.values(variantTimeoutRef.current).forEach(timeout => clearTimeout(timeout));
-      if (defaultMaterialTimeoutRef.current) {
-        clearTimeout(defaultMaterialTimeoutRef.current);
+      const timeoutRefs = variantTimeoutRef.current;
+      const defaultTimeout = defaultMaterialTimeoutRef.current;
+      
+      Object.values(timeoutRefs).forEach(timeout => clearTimeout(timeout));
+      if (defaultTimeout) {
+        clearTimeout(defaultTimeout);
       }
     };
   }, []);
