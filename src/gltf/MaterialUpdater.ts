@@ -3,6 +3,38 @@
 import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage, MeshAssignment } from '@/gltf/gltfTypes';
 import { cloneDeep } from 'lodash';
 
+// Helper function to ensure required extensions are present
+function ensureExtensions(targetData: GltfData) {
+  // Initialize arrays if they don't exist
+  if (!targetData.extensionsUsed) {
+    targetData.extensionsUsed = [];
+  }
+  if (!targetData.extensionsRequired) {
+    targetData.extensionsRequired = [];
+  }
+
+  // Required extensions for this application
+  const requiredExtensions = ['KHR_texture_transform', 'KHR_materials_variants'];
+  const usedExtensions = ['KHR_texture_transform', 'KHR_materials_variants'];
+
+  // Add to extensionsUsed if not present
+  usedExtensions.forEach(ext => {
+    if (!targetData.extensionsUsed!.includes(ext)) {
+      targetData.extensionsUsed!.push(ext);
+    }
+  });
+
+  // Add KHR_texture_transform to extensionsRequired if not present
+  if (!targetData.extensionsRequired!.includes('KHR_texture_transform')) {
+    targetData.extensionsRequired!.push('KHR_texture_transform');
+  }
+
+  console.log('Extensions ensured:', {
+    extensionsUsed: targetData.extensionsUsed,
+    extensionsRequired: targetData.extensionsRequired
+  });
+}
+
 // Helper function to create a mapping between old and new material indices
 function createMaterialIndexMapping(
   oldMaterials: GltfMaterial[],
@@ -446,6 +478,9 @@ export async function updateMaterials(
     targetData.extensionsUsed = targetData.extensionsUsed || [];
     targetData.extensionsRequired = targetData.extensionsRequired || [];
 
+    // Ensure required extensions are present
+    ensureExtensions(targetData);
+
     // Handle AO texture replacement
     const {
       updatedTextures,
@@ -523,6 +558,9 @@ export async function updateMaterials(
     if (applyVariantsFlag) {
       applyVariants(targetData, materialData);
     }
+
+    // Final extension check after all processing
+    ensureExtensions(targetData);
 
     progressCallback(1);
 
@@ -611,6 +649,9 @@ export async function exportIndividualVariants(
 
       let variantData: GltfData = cloneDeep(jsonData);
 
+      // Ensure extensions are present in variant data
+      ensureExtensions(variantData);
+
       // Apply the variant as the default material
       variantData.meshes.forEach((mesh) => {
         mesh.primitives.forEach((primitive) => {
@@ -687,6 +728,14 @@ export async function exportIndividualVariants(
           delete primitive.extensions?.KHR_materials_variants;
         });
       });
+
+      // Update extensions used/required since we removed variants
+      if (variantData.extensionsUsed) {
+        const variantIndex = variantData.extensionsUsed.indexOf('KHR_materials_variants');
+        if (variantIndex !== -1) {
+          variantData.extensionsUsed.splice(variantIndex, 1);
+        }
+      }
 
       if (applyMoodRotationFlag) {
         const isBlavalen = materialData.models?.['Blavalen']?.includes(model) || false;
