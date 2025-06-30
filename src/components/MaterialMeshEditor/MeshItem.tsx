@@ -1,6 +1,6 @@
 // src/components/MaterialMeshEditor/MeshItem.tsx
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { 
   GripVertical, 
   ChevronDown, 
@@ -80,6 +80,20 @@ const MeshItem: React.FC<MeshItemProps> = ({
 }) => {
   const [isTagSelectionOpen, setIsTagSelectionOpen] = useState(false);
   const [expandedVariants, setExpandedVariants] = useState(false);
+  
+  // Local state for input values to avoid slow typing
+  const [localVariants, setLocalVariants] = useState(assignment.variants);
+  const [localDefaultMaterial, setLocalDefaultMaterial] = useState(assignment.defaultMaterial);
+  
+  // Timeouts for debouncing
+  const variantTimeoutRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
+  const defaultMaterialTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Update local state when assignment changes from outside
+  React.useEffect(() => {
+    setLocalVariants(assignment.variants);
+    setLocalDefaultMaterial(assignment.defaultMaterial);
+  }, [assignment.variants, assignment.defaultMaterial]);
 
   const autoTagEnabled = assignment.autoTag?.enabled || false;
   const autoTagClass = cn(
@@ -94,6 +108,66 @@ const MeshItem: React.FC<MeshItemProps> = ({
       setIsTagSelectionOpen(true);
     }
   };
+
+  const handleDefaultMaterialChange = useCallback((value: string) => {
+    setLocalDefaultMaterial(value);
+    
+    // Clear existing timeout
+    if (defaultMaterialTimeoutRef.current) {
+      clearTimeout(defaultMaterialTimeoutRef.current);
+    }
+    
+    // Set new timeout
+    defaultMaterialTimeoutRef.current = setTimeout(() => {
+      onAssignmentChange(meshName, "defaultMaterial", value);
+    }, 300);
+  }, [meshName, onAssignmentChange]);
+
+  const handleVariantFieldChange = useCallback((index: number, field: "name" | "material", value: string) => {
+    // Update local state immediately
+    setLocalVariants(prev => prev.map((v, i) => 
+      i === index ? { ...v, [field]: value } : v
+    ));
+    
+    const timeoutKey = `${index}-${field}`;
+    
+    // Clear existing timeout
+    if (variantTimeoutRef.current[timeoutKey]) {
+      clearTimeout(variantTimeoutRef.current[timeoutKey]);
+    }
+    
+    // Set new timeout
+    variantTimeoutRef.current[timeoutKey] = setTimeout(() => {
+      onVariantChange(meshName, index, field, value);
+      delete variantTimeoutRef.current[timeoutKey];
+    }, 300);
+  }, [meshName, onVariantChange]);
+
+  const handleRemoveVariantLocal = useCallback((index: number) => {
+    // Clear any pending timeouts for this variant
+    Object.keys(variantTimeoutRef.current).forEach(key => {
+      if (key.startsWith(`${index}-`)) {
+        clearTimeout(variantTimeoutRef.current[key]);
+        delete variantTimeoutRef.current[key];
+      }
+    });
+    
+    onRemoveVariant(meshName, index);
+  }, [meshName, onRemoveVariant]);
+
+  const handleAddVariantLocal = useCallback(() => {
+    onAddVariant(meshName);
+  }, [meshName, onAddVariant]);
+
+  // Cleanup timeouts on unmount
+  React.useEffect(() => {
+    return () => {
+      Object.values(variantTimeoutRef.current).forEach(timeout => clearTimeout(timeout));
+      if (defaultMaterialTimeoutRef.current) {
+        clearTimeout(defaultMaterialTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <Card 
@@ -149,7 +223,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
               {meshName}
             </h5>
             <Badge variant="secondary" className="ml-2">
-              {assignment.variants.length} variants
+              {localVariants.length} variants
             </Badge>
           </div>
 
@@ -251,8 +325,8 @@ const MeshItem: React.FC<MeshItemProps> = ({
               Default Material
             </label>
             <SearchableSelect
-              value={assignment.defaultMaterial}
-              onValueChange={(value) => onAssignmentChange(meshName, "defaultMaterial", value)}
+              value={localDefaultMaterial}
+              onValueChange={handleDefaultMaterialChange}
               options={materials}
               placeholder="Select a material"
               className="w-full"
@@ -287,12 +361,12 @@ const MeshItem: React.FC<MeshItemProps> = ({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {assignment.variants.map((variant, index) => (
+                      {localVariants.map((variant, index) => (
                         <TableRow key={index}>
                           <TableCell>
                             <Input
                               value={variant.name}
-                              onChange={(e) => onVariantChange(meshName, index, "name", e.target.value)}
+                              onChange={(e) => handleVariantFieldChange(index, "name", e.target.value)}
                               placeholder="Variant name"
                               className="w-full"
                             />
@@ -300,7 +374,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
                           <TableCell>
                             <SearchableSelect
                               value={variant.material}
-                              onValueChange={(value) => onVariantChange(meshName, index, "material", value)}
+                              onValueChange={(value) => handleVariantFieldChange(index, "material", value || '')}
                               options={materials}
                               placeholder="Select a material"
                             />
@@ -309,7 +383,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
-                                  onClick={() => onRemoveVariant(meshName, index)}
+                                  onClick={() => handleRemoveVariantLocal(index)}
                                   variant="ghost"
                                   size="sm"
                                   className="hover:bg-red-50 dark:hover:bg-red-900"
@@ -328,7 +402,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
 
                 <div className="p-4 border-t border-gray-200 dark:border-gray-700">
                   <Button
-                    onClick={() => onAddVariant(meshName)}
+                    onClick={handleAddVariantLocal}
                     variant="outline"
                     size="sm"
                     className="w-full hover:bg-gray-50 dark:hover:bg-gray-800"

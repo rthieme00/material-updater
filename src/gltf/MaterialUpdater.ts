@@ -1,11 +1,88 @@
 // src/gltf/MaterialUpdater.ts
 
-import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage, MeshAssignment } from '@/gltf/gltfTypes';
+import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage, MeshAssignment, MeshGroup } from '@/gltf/gltfTypes';
 import { cloneDeep } from 'lodash';
+
+// Helper function to get mesh assignments with group priority
+function getMeshAssignmentsWithGroupPriority(
+  materialData: MaterialData,
+  fileName: string
+): { [meshName: string]: MeshAssignment } {
+  const result = { ...materialData.meshAssignments };
+  
+  // Check if this filename matches any group
+  if (materialData.meshGroups) {
+    Object.values(materialData.meshGroups).forEach(group => {
+      // Check if this filename matches any of the group's filenames
+      const fileNameWithoutExtension = fileName.replace(/\.(gltf|glb)$/i, '');
+      const isMatch = group.filenames.some(groupFilename => {
+        const groupFileNameWithoutExtension = groupFilename.replace(/\.(gltf|glb)$/i, '');
+        return fileNameWithoutExtension === groupFileNameWithoutExtension ||
+               fileName === groupFilename ||
+               fileNameWithoutExtension.includes(groupFileNameWithoutExtension) ||
+               groupFileNameWithoutExtension.includes(fileNameWithoutExtension);
+      });
+
+      if (isMatch) {
+        console.log(`File "${fileName}" matches group "${group.name}"`);
+        // Add group meshes to the result, they take priority over regular meshes
+        Object.entries(group.meshes).forEach(([meshName, assignment]) => {
+          result[meshName] = assignment;
+          console.log(`  Added mesh "${meshName}" from group`);
+        });
+      }
+    });
+  }
+
+  return result;
+}
+
+// Helper function to get ordered variants with group priority
+function getOrderedVariantsWithGroupPriority(
+  materialData: MaterialData,
+  fileName: string
+): string[] {
+  const meshAssignments = getMeshAssignmentsWithGroupPriority(materialData, fileName);
+  
+  const variants = new Map<string, Set<string>>();
+  const meshToVariants = new Map<string, string[]>();
+
+  // Collect all unique variants and their materials
+  Object.entries(meshAssignments).forEach(([meshName, assignment]) => {
+    const meshVariants = assignment.variants.map(v => v.name);
+    meshToVariants.set(meshName, meshVariants);
+
+    assignment.variants.forEach(variant => {
+      if (!variants.has(variant.name)) {
+        variants.set(variant.name, new Set());
+      }
+      variants.get(variant.name)?.add(variant.material);
+    });
+  });
+
+  // Sort variants by their first appearance in mesh order
+  const sortedVariants = Array.from(variants.keys()).sort((a, b) => {
+    const meshEntries = Array.from(meshToVariants.entries());
+    
+    for (let i = 0; i < meshEntries.length; i++) {
+      const [_, meshVariants] = meshEntries[i];
+      const indexA = meshVariants.indexOf(a);
+      const indexB = meshVariants.indexOf(b);
+      
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+    }
+    return 0;
+  });
+
+  return sortedVariants;
+}
 
 // Helper function to ensure required extensions are present
 function ensureExtensions(targetData: GltfData) {
-  // Initialize arrays if they don't exist
   if (!targetData.extensionsUsed) {
     targetData.extensionsUsed = [];
   }
@@ -13,18 +90,15 @@ function ensureExtensions(targetData: GltfData) {
     targetData.extensionsRequired = [];
   }
 
-  // Required extensions for this application
   const requiredExtensions = ['KHR_texture_transform', 'KHR_materials_variants'];
   const usedExtensions = ['KHR_texture_transform', 'KHR_materials_variants'];
 
-  // Add to extensionsUsed if not present
   usedExtensions.forEach(ext => {
     if (!targetData.extensionsUsed!.includes(ext)) {
       targetData.extensionsUsed!.push(ext);
     }
   });
 
-  // Add KHR_texture_transform to extensionsRequired if not present
   if (!targetData.extensionsRequired!.includes('KHR_texture_transform')) {
     targetData.extensionsRequired!.push('KHR_texture_transform');
   }
@@ -60,34 +134,6 @@ function isAOTexture(texture: GltfTexture, images: GltfImage[]): boolean {
   return imageName.includes('_ao') || imageName.includes('ambientocclusion');
 }
 
-// Helper function to identify and preserve AO textures from target data
-function preserveAOTextures(
-  targetData: GltfData,
-  referenceData: GltfData
-): {
-  targetAOTextureMap: Map<string, { textureIndex: number; imageIndex: number }>;
-} {
-  const targetAOTextureMap = new Map<string, { textureIndex: number; imageIndex: number }>();
-
-  // Find AO textures in target file and map them to material names
-  targetData.materials.forEach((material) => {
-    if (material.occlusionTexture) {
-      const textureIndex = material.occlusionTexture.index;
-      if (textureIndex !== undefined) {
-        const texture = targetData.textures[textureIndex];
-        if (isAOTexture(texture, targetData.images) && texture.source !== undefined) {
-          targetAOTextureMap.set(material.name, {
-            textureIndex: textureIndex,
-            imageIndex: texture.source
-          });
-        }
-      }
-    }
-  });
-
-  return { targetAOTextureMap };
-}
-
 // Helper function to find the AO image in target file
 function findTargetAOImage(targetData: GltfData): number | null {
   const aoImageIndex = targetData.images.findIndex(img => 
@@ -119,36 +165,28 @@ function handleAOTextures(
   updatedTextures: GltfTexture[];
   updatedImages: GltfImage[];
 } {
-  // Find the AO image in target file
   const targetAOImageIndex = findTargetAOImage(targetData);
   if (targetAOImageIndex === null) {
     throw new Error('No AO image found in target file');
   }
 
-  // Find AO texture in reference file
   const refAOTextureIndex = findReferenceAOTexture(referenceData);
   if (refAOTextureIndex === null) {
     throw new Error('No AO texture found in reference file');
   }
 
-  // Create new arrays with reference data
   const updatedTextures = [...referenceData.textures];
   const updatedImages = [...referenceData.images];
 
-  // Get the AO image from target
   const targetAOImage = targetData.images[targetAOImageIndex];
-
-  // Get the reference AO texture and its image index
   const refAOTexture = referenceData.textures[refAOTextureIndex];
   
   if (refAOTexture.source === undefined) {
     throw new Error('Reference AO texture has no source image');
   }
 
-  // Replace the reference AO image with target AO image
   updatedImages[refAOTexture.source] = targetAOImage;
 
-  // Keep the texture pointing to the same index where we placed the target AO image
   updatedTextures[refAOTextureIndex] = {
     ...refAOTexture,
     source: refAOTexture.source
@@ -181,117 +219,21 @@ function updateVariantMappings(
   }
 }
 
-// Helper function to validate material assignments
-function validateMaterialAssignments(
-  meshName: string,
-  assignment: any,
-  materials: GltfMaterial[]
-): boolean {
-  const materialNames = new Set(materials.map(m => m.name));
-  
-  if (assignment.defaultMaterial && !materialNames.has(assignment.defaultMaterial)) {
-    console.warn(`Invalid default material "${assignment.defaultMaterial}" for mesh "${meshName}"`);
-    return false;
-  }
-
-  for (const variant of assignment.variants) {
-    if (!materialNames.has(variant.material)) {
-      console.warn(`Invalid variant material "${variant.material}" for mesh "${meshName}"`);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function findAOImageIndex(images: GltfImage[]): number {
-  return images.findIndex(image => image.name && image.name.endsWith('_AO'));
-}
-
-function findAOTextureIndex(textures: GltfTexture[]): number {
-  return textures.findIndex(texture => texture.name && texture.name.endsWith('tex_AmbientOcclusion_A'));
-}
-
-// Add a new helper function to get ordered variants
-function getOrderedVariants(meshAssignments: { [key: string]: MeshAssignment }): string[] {
-  const variants = new Map<string, Set<string>>();
-  const meshToVariants = new Map<string, string[]>();
-
-  // First pass: collect all unique variants and their materials
-  Object.entries(meshAssignments).forEach(([meshName, assignment]) => {
-    const meshVariants = assignment.variants.map(v => v.name);
-    meshToVariants.set(meshName, meshVariants);
-
-    assignment.variants.forEach(variant => {
-      if (!variants.has(variant.name)) {
-        variants.set(variant.name, new Set());
-      }
-      variants.get(variant.name)?.add(variant.material);
-    });
-  });
-
-  // Sort variants by their first appearance in mesh order
-  const sortedVariants = Array.from(variants.keys()).sort((a, b) => {
-    const meshEntries = Array.from(meshToVariants.entries());
-    
-    for (let i = 0; i < meshEntries.length; i++) {
-      const [_, meshVariants] = meshEntries[i];
-      const indexA = meshVariants.indexOf(a);
-      const indexB = meshVariants.indexOf(b);
-      
-      if (indexA !== -1 && indexB !== -1) {
-        return indexA - indexB;
-      }
-      if (indexA !== -1) return -1;
-      if (indexB !== -1) return 1;
-    }
-    return 0;
-  });
-
-  return sortedVariants;
-}
-
-// Add new validation helper
-function validateMeshAssignment(
-  meshName: string,
-  assignment: MeshAssignment,
-  materials: GltfMaterial[],
-  variants: Array<{ name: string }>
-): boolean {
-  const materialNames = new Set(materials.map(m => m.name));
-  const variantNames = new Set(variants.map(v => v.name));
-  
-  // Check default material
-  if (assignment.defaultMaterial && !materialNames.has(assignment.defaultMaterial)) {
-    console.warn(`Invalid default material "${assignment.defaultMaterial}" for mesh "${meshName}"`);
-    return false;
-  }
-
-  // Check variants
-  for (const variant of assignment.variants) {
-    if (!materialNames.has(variant.material)) {
-      console.warn(`Invalid variant material "${variant.material}" for mesh "${meshName}"`);
-      return false;
-    }
-    if (!variantNames.has(variant.name)) {
-      console.warn(`Invalid variant name "${variant.name}" for mesh "${meshName}"`);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function applyVariants(targetData: GltfData, materialData: MaterialData) {
-  console.log('Starting variant application...');
+// Modified applyVariants function to use group priority
+function applyVariants(targetData: GltfData, materialData: MaterialData, fileName: string) {
+  console.log(`Starting variant application for file: ${fileName}...`);
   
   if (!targetData.extensions) targetData.extensions = {};
   if (!targetData.extensions.KHR_materials_variants) {
     targetData.extensions.KHR_materials_variants = { variants: [] };
   }
 
+  // Get mesh assignments with group priority
+  const meshAssignments = getMeshAssignmentsWithGroupPriority(materialData, fileName);
+  console.log(`Using mesh assignments for ${fileName}:`, Object.keys(meshAssignments));
+
   // Get ordered variants
-  const orderedVariants = getOrderedVariants(materialData.meshAssignments);
+  const orderedVariants = getOrderedVariantsWithGroupPriority(materialData, fileName);
   console.log('Ordered variants:', orderedVariants);
   
   // Only add variants extension if we actually have variants
@@ -299,7 +241,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
     targetData.extensions.KHR_materials_variants.variants = 
       orderedVariants.map(name => ({ name }));
 
-    // Make sure extensionsUsed includes variants extension
     if (!targetData.extensionsUsed) {
       targetData.extensionsUsed = [];
     }
@@ -307,7 +248,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
       targetData.extensionsUsed.push('KHR_materials_variants');
     }
   } else {
-    // Remove variants extension if no variants exist
     delete targetData.extensions.KHR_materials_variants;
   }
 
@@ -323,7 +263,7 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
 
   // Apply material assignments to meshes
   targetData.meshes.forEach((mesh: GltfMesh) => {
-    const meshAssignment = materialData.meshAssignments[mesh.name];
+    const meshAssignment = meshAssignments[mesh.name];
     
     // Clear existing variant extensions from all primitives first
     mesh.primitives.forEach(primitive => {
@@ -331,7 +271,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
         delete primitive.extensions.KHR_materials_variants;
       }
       
-      // Clean up empty extensions object
       if (primitive.extensions && Object.keys(primitive.extensions).length === 0) {
         delete primitive.extensions;
       }
@@ -343,7 +282,7 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
       return;
     }
 
-    console.log(`Processing mesh "${mesh.name}"...`);
+    console.log(`Processing mesh "${mesh.name}" with group priority...`);
     console.log('Assignment:', meshAssignment);
 
     mesh.primitives.forEach((primitive, primitiveIndex) => {
@@ -360,7 +299,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
 
       // Only add variants if they exist for this mesh
       if (meshAssignment.variants && meshAssignment.variants.length > 0) {
-        // Sort variants to match the global order
         const sortedVariants = meshAssignment.variants
           .sort((a, b) => {
             const indexA = orderedVariants.indexOf(a.name);
@@ -368,13 +306,11 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
             return indexA - indexB;
           })
           .filter(variant => {
-            // Filter out invalid variants
             const materialIndex = materialNameToIndex.get(variant.material);
             const variantIndex = variantNameToIndex.get(variant.name);
             return materialIndex !== undefined && variantIndex !== undefined;
           });
 
-        // Only add variant extension if we have valid variants
         if (sortedVariants.length > 0) {
           if (!primitive.extensions) {
             primitive.extensions = {};
@@ -389,7 +325,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
             };
           });
 
-          // Only add variants extension if we have valid mappings
           if (mappings.length > 0) {
             primitive.extensions.KHR_materials_variants = {
               mappings: mappings
@@ -399,7 +334,6 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
         }
       }
 
-      // Clean up empty extensions
       if (primitive.extensions && Object.keys(primitive.extensions).length === 0) {
         delete primitive.extensions;
       }
@@ -423,12 +357,11 @@ function applyVariants(targetData: GltfData, materialData: MaterialData) {
     }
   }
 
-  // Clean up empty extensions object at root level
   if (targetData.extensions && Object.keys(targetData.extensions).length === 0) {
     delete targetData.extensions;
   }
 
-  console.log('Variant application completed');
+  console.log(`Variant application completed for ${fileName}`);
 }
 
 // Update applyMoodRotation to preserve AO textures
@@ -438,7 +371,6 @@ function applyMoodRotation(targetData: GltfData, isBlavalen: boolean) {
       const rotation = isBlavalen ? 0 : 1.56;
       const applyRotation = (texture: any) => {
         if (texture && texture.extensions && texture.extensions.KHR_texture_transform) {
-          // Don't rotate AO textures
           const isAO = isAOTexture(targetData.textures[texture.index], targetData.images);
           if (!isAO) {
             texture.extensions.KHR_texture_transform.rotation = rotation;
@@ -510,7 +442,6 @@ export async function updateMaterials(
     referenceData.materials.forEach((material, oldIndex) => {
       if (!materialNameToNewIndex.has(material.name)) {
         materialNameToNewIndex.set(material.name, orderedMaterials.length);
-        // Also store the numeric index mapping
         materialNameToNewIndex.set(oldIndex, orderedMaterials.length);
         orderedMaterials.push(cloneDeep(material));
       }
@@ -524,7 +455,6 @@ export async function updateMaterials(
         if (mesh.primitives) {
           mesh.primitives.forEach(primitive => {
             if (primitive.material !== undefined) {
-              // Try to get the new index using either the number or string mapping
               const newIndex = materialNameToNewIndex.get(primitive.material);
               if (newIndex !== undefined) {
                 primitive.material = newIndex;
@@ -554,9 +484,9 @@ export async function updateMaterials(
 
     progressCallback(0.8);
 
-    // Apply variants if needed
+    // Apply variants if needed (now with group priority)
     if (applyVariantsFlag) {
-      applyVariants(targetData, materialData);
+      applyVariants(targetData, materialData, targetFileName);
     }
 
     // Final extension check after all processing
@@ -634,10 +564,10 @@ export async function exportIndividualVariants(
     throw new Error("Material JSON data is missing. Please upload a valid Materials.json file.");
   }
 
-  const orderedVariants = getOrderedVariants(materialData.meshAssignments);
+  // Use group priority for variant ordering
+  const orderedVariants = getOrderedVariantsWithGroupPriority(materialData, fileName);
   const exportedVariants: ExportedVariant[] = [];
   const variants = jsonData.extensions?.KHR_materials_variants?.variants || [];
-  const totalVariants = variants.length;
 
   try {
     // Process variants in the determined order
@@ -731,9 +661,9 @@ export async function exportIndividualVariants(
 
       // Update extensions used/required since we removed variants
       if (variantData.extensionsUsed) {
-        const variantIndex = variantData.extensionsUsed.indexOf('KHR_materials_variants');
-        if (variantIndex !== -1) {
-          variantData.extensionsUsed.splice(variantIndex, 1);
+        const variantExtIndex = variantData.extensionsUsed.indexOf('KHR_materials_variants');
+        if (variantExtIndex !== -1) {
+          variantData.extensionsUsed.splice(variantExtIndex, 1);
         }
       }
 
@@ -748,7 +678,7 @@ export async function exportIndividualVariants(
 
       exportedVariants.push({ fileName: variantFileName, content: arrayBuffer });
 
-      progressCallback((i + 1) / totalVariants);
+      progressCallback((i + 1) / orderedVariants.length);
     }
 
     return { exportedVariants };

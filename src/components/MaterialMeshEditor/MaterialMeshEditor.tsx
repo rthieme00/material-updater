@@ -10,8 +10,7 @@ import MaterialsSection from './MaterialsSection';
 import MeshAssignmentsSection from './MeshAssignmentsSection';
 import MaterialSortDialog from '../Dialogs/MaterialSortDialog';
 import DuplicateMaterialDialog from '../Dialogs/DuplicateMaterialDialog';
-import { debounce } from 'lodash';
-import { MaterialData, Material, MeshAssignment, Variant, TagSortState } from '@/gltf/gltfTypes';
+import { MaterialData, Material, MeshAssignment, MeshGroup, Variant, TagSortState } from '@/gltf/gltfTypes';
 import { ScrollArea } from '../ui/scroll-area';
 import PreviewVariantsSection from './PreviewVariantsSection';
 import ExtractVariantsButton from './ExtractVariantsButton';
@@ -32,6 +31,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [meshAssignments, setMeshAssignments] = useState<{[key: string]: MeshAssignment}>({});
+  const [meshGroups, setMeshGroups] = useState<{[key: string]: MeshGroup}>({});
   const [expandedMeshes, setExpandedMeshes] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -41,6 +41,9 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
   const [isAddMaterialDialogOpen, setIsAddMaterialDialogOpen] = useState(false);
   const [isAddMeshDialogOpen, setIsAddMeshDialogOpen] = useState(false);
+  const [isAddGroupDialogOpen, setIsAddGroupDialogOpen] = useState(false);
+  const [isAddMeshToGroupDialogOpen, setIsAddMeshToGroupDialogOpen] = useState(false);
+  const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
   const [newMaterialTags, setNewMaterialTags] = useState<string>('');
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
@@ -48,6 +51,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   const [isDuplicateDialogOpen, setIsDuplicateDialogOpen] = useState(false);
   const [currentItemToRename, setCurrentItemToRename] = useState<string | null>(null);
   const [currentItemToTag, setCurrentItemToTag] = useState<string | null>(null);
+  const [renameType, setRenameType] = useState<'mesh' | 'group' | 'groupMesh' | 'material'>('mesh');
   const [duplicateMaterials, setDuplicateMaterials] = useState<Array<{
     name: string;
     existingTags: string[];
@@ -60,12 +64,6 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [onUpdate]);
 
-  const autoTagAssignments = useMemo(() => {
-    return Object.entries(meshAssignments).filter(([_, assignment]) => 
-      assignment.autoTag?.enabled && assignment.autoTag.tag
-    );
-  }, [meshAssignments]);
-
   const updateAllTags = useCallback((materials: Material[]) => {
     const tags = new Set<string>();
     materials.forEach(material => material.tags.forEach(tag => tags.add(tag)));
@@ -75,15 +73,16 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   // Remove the auto-loading from localStorage in this useEffect
   useEffect(() => {
     try {
-      if (data) {  // Only set state if data is provided
+      if (data) {
         setMaterials(data.materials || []);
         setMeshAssignments(data.meshAssignments || {});
+        setMeshGroups(data.meshGroups || {});
         updateAllTags(data.materials || []);
         setIsAutoSortEnabled(data.sortSettings?.autoSortEnabled ?? false);
       } else {
-        // If no data, ensure clean state
         setMaterials([]);
         setMeshAssignments({});
+        setMeshGroups({});
         setAllTags([]);
         setIsAutoSortEnabled(false);
         setActiveSection(null);
@@ -94,51 +93,387 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [data, updateAllTags]);
 
-  // Modified autoTagChange handler to prevent infinite loops
-  const handleAutoTagChange = useCallback((meshName: string, enabled: boolean, tag?: string) => {
-    setMeshAssignments(prev => {
-      const currentAssignment = prev[meshName];
-      
-      // Create new assignment object
-      const newAssignment = {
-        ...currentAssignment,
-        autoTag: enabled ? { 
-          enabled, 
-          tag: tag || currentAssignment?.autoTag?.tag || '' 
-        } : undefined
+  // Group management functions
+  const handleAddGroup = useCallback(() => {
+    setIsAddGroupDialogOpen(true);
+  }, []);
+
+  const handleAddGroupSubmit = useCallback((groupName: string) => {
+    if (groupName.trim()) {
+      const groupId = `group_${Date.now()}`;
+      const newGroup: MeshGroup = {
+        id: groupId,
+        name: groupName.trim(),
+        filenames: [],
+        meshes: {},
+        isExpanded: false
       };
 
-      // Only update variants if auto-tag is enabled and tag is provided
-      if (enabled && tag) {
-        const taggedMaterials = materials.filter(m => m.tags.includes(tag));
-        if (taggedMaterials.length > 0) {
-          newAssignment.variants = taggedMaterials.map(m => ({ 
-            name: m.name, 
-            material: m.name 
-          }));
-        }
-      }
+      setMeshGroups(prev => {
+        const newGroups = {
+          ...prev,
+          [groupId]: newGroup
+        };
 
-      const newAssignments = {
+        const updatedData = {
+          ...data,
+          materials,
+          meshAssignments,
+          meshGroups: newGroups
+        };
+        safeUpdate(updatedData);
+
+        return newGroups;
+      });
+    }
+    setIsAddGroupDialogOpen(false);
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleToggleGroup = useCallback((groupId: string) => {
+    setMeshGroups(prev => {
+      const newGroups = {
         ...prev,
-        [meshName]: newAssignment
+        [groupId]: {
+          ...prev[groupId],
+          isExpanded: !prev[groupId].isExpanded
+        }
       };
 
-      // Batch the update to prevent multiple re-renders
       const updatedData = {
         ...data,
         materials,
-        meshAssignments: newAssignments
+        meshAssignments,
+        meshGroups: newGroups
       };
-      
-      // Use requestAnimationFrame to batch the update
-      requestAnimationFrame(() => {
-        safeUpdate(updatedData);
-      });
+      safeUpdate(updatedData);
 
-      return newAssignments;
+      return newGroups;
     });
-  }, [data, materials, safeUpdate]);
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleRenameGroup = useCallback((groupId: string) => {
+    setCurrentItemToRename(groupId);
+    setRenameType('group');
+    setIsRenameDialogOpen(true);
+  }, []);
+
+  const handleRemoveGroup = useCallback((groupId: string) => {
+    setMeshGroups(prev => {
+      const newGroups = { ...prev };
+      delete newGroups[groupId];
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleSetGroupFilenames = useCallback((groupId: string, filenames: string[]) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          filenames
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleAddMeshToGroup = useCallback((groupId: string) => {
+    setCurrentGroupId(groupId);
+    setIsAddMeshToGroupDialogOpen(true);
+  }, []);
+
+  const handleAddMeshToGroupSubmit = useCallback((meshName: string) => {
+    if (meshName.trim() && currentGroupId) {
+      setMeshGroups(prev => {
+        const newGroups = {
+          ...prev,
+          [currentGroupId]: {
+            ...prev[currentGroupId],
+            meshes: {
+              ...prev[currentGroupId].meshes,
+              [meshName.trim()]: { defaultMaterial: '', variants: [] }
+            }
+          }
+        };
+
+        const updatedData = {
+          ...data,
+          materials,
+          meshAssignments,
+          meshGroups: newGroups
+        };
+        safeUpdate(updatedData);
+
+        return newGroups;
+      });
+    }
+    setIsAddMeshToGroupDialogOpen(false);
+    setCurrentGroupId(null);
+  }, [currentGroupId, data, materials, meshAssignments, safeUpdate]);
+
+  // Group mesh management
+  const handleGroupAssignmentChange = useCallback((groupId: string, meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: {
+            ...prev[groupId].meshes,
+            [meshName]: {
+              ...prev[groupId].meshes[meshName],
+              [field]: value || ''
+            }
+          }
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleGroupVariantChange = useCallback((groupId: string, meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: {
+            ...prev[groupId].meshes,
+            [meshName]: {
+              ...prev[groupId].meshes[meshName],
+              variants: prev[groupId].meshes[meshName].variants.map((v, i) => 
+                i === index ? { ...v, [field]: value || '' } : v
+              )
+            }
+          }
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleRemoveVariantFromGroup = useCallback((groupId: string, meshName: string, index: number) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: {
+            ...prev[groupId].meshes,
+            [meshName]: {
+              ...prev[groupId].meshes[meshName],
+              variants: prev[groupId].meshes[meshName].variants.filter((_, i) => i !== index)
+            }
+          }
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleAddVariantToGroup = useCallback((groupId: string, meshName: string) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: {
+            ...prev[groupId].meshes,
+            [meshName]: {
+              ...prev[groupId].meshes[meshName],
+              variants: [...prev[groupId].meshes[meshName].variants, { name: '', material: '' }]
+            }
+          }
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleRemoveMeshFromGroup = useCallback((groupId: string, meshName: string) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: Object.fromEntries(
+            Object.entries(prev[groupId].meshes).filter(([name]) => name !== meshName)
+          )
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleRenameMeshInGroup = useCallback((groupId: string, meshName: string) => {
+    setCurrentItemToRename(`${groupId}:${meshName}`);
+    setRenameType('groupMesh');
+    setIsRenameDialogOpen(true);
+  }, []);
+
+  const handleGroupAutoTagChange = useCallback((groupId: string, meshName: string, enabled: boolean, tag?: string) => {
+    setMeshGroups(prev => {
+      const newGroups = {
+        ...prev,
+        [groupId]: {
+          ...prev[groupId],
+          meshes: {
+            ...prev[groupId].meshes,
+            [meshName]: {
+              ...prev[groupId].meshes[meshName],
+              autoTag: enabled ? { 
+                enabled, 
+                tag: tag || prev[groupId].meshes[meshName]?.autoTag?.tag || '' 
+              } : undefined
+            }
+          }
+        }
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments,
+        meshGroups: newGroups
+      };
+      safeUpdate(updatedData);
+
+      return newGroups;
+    });
+  }, [data, materials, meshAssignments, safeUpdate]);
+
+  const handleGroupAutoAssignTag = useCallback((groupId: string, meshName: string, selectedTag: string) => {
+    const taggedMaterials = materials.filter(m => m.tags.includes(selectedTag));
+    if (taggedMaterials.length > 0) {
+      setMeshGroups(prev => {
+        const newGroups = {
+          ...prev,
+          [groupId]: {
+            ...prev[groupId],
+            meshes: {
+              ...prev[groupId].meshes,
+              [meshName]: {
+                ...prev[groupId].meshes[meshName],
+                defaultMaterial: taggedMaterials[0].name,
+                variants: taggedMaterials.map(m => ({ name: m.name, material: m.name }))
+              }
+            }
+          }
+        };
+
+        const updatedData = {
+          ...data,
+          materials,
+          meshAssignments,
+          meshGroups: newGroups
+        };
+        safeUpdate(updatedData);
+
+        return newGroups;
+      });
+    }
+  }, [materials, data, meshAssignments, safeUpdate]);
+
+  const handleMoveGroup = useCallback((fromIndex: number, direction: 'up' | 'down') => {
+    const groupEntries = Object.entries(meshGroups);
+    const toIndex = fromIndex + (direction === 'up' ? -1 : 1);
+    
+    if (toIndex < 0 || toIndex >= groupEntries.length) return;
+
+    [groupEntries[fromIndex], groupEntries[toIndex]] = 
+    [groupEntries[toIndex], groupEntries[fromIndex]];
+    
+    const newGroups = Object.fromEntries(groupEntries);
+
+    setMeshGroups(newGroups);
+
+    const updatedData = {
+      ...data,
+      materials,
+      meshAssignments,
+      meshGroups: newGroups
+    };
+    safeUpdate(updatedData);
+  }, [meshGroups, data, materials, meshAssignments, safeUpdate]);
+
+  const canMoveGroup = useCallback((index: number, direction: 'up' | 'down'): boolean => {
+    const groupCount = Object.keys(meshGroups).length;
+    if (direction === 'up') {
+      return index > 0;
+    } else {
+      return index < groupCount - 1;
+    }
+  }, [meshGroups]);
+
+  const autoTagAssignments = useMemo(() => {
+    return Object.entries(meshAssignments).filter(([_, assignment]) => 
+      assignment.autoTag?.enabled && assignment.autoTag.tag
+    );
+  }, [meshAssignments]);
 
   // Modified effect to handle auto-tag updates more efficiently
   useEffect(() => {
@@ -271,6 +606,48 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
     return sortedMaterials;
   }, [data.sortSettings?.tagStates]);
+
+    const handleAutoTagChange = useCallback((meshName: string, enabled: boolean, tag?: string) => {
+    setMeshAssignments(prev => {
+      const currentAssignment = prev[meshName];
+      
+      const newAssignment = {
+        ...currentAssignment,
+        autoTag: enabled ? { 
+          enabled, 
+          tag: tag || currentAssignment?.autoTag?.tag || '' 
+        } : undefined
+      };
+
+      if (enabled && tag) {
+        const taggedMaterials = materials.filter(m => m.tags.includes(tag));
+        if (taggedMaterials.length > 0) {
+          newAssignment.variants = taggedMaterials.map(m => ({ 
+            name: m.name, 
+            material: m.name 
+          }));
+        }
+      }
+
+      const newAssignments = {
+        ...prev,
+        [meshName]: newAssignment
+      };
+
+      const updatedData = {
+        ...data,
+        materials,
+        meshAssignments: newAssignments,
+        meshGroups
+      };
+      
+      requestAnimationFrame(() => {
+        safeUpdate(updatedData);
+      });
+
+      return newAssignments;
+    });
+  }, [data, materials, meshGroups, safeUpdate]);
 
   const handleMaterialOrderChange = useCallback((result: any) => {
     if (!result.destination) return;
@@ -584,16 +961,71 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
   }, []);
 
   const handleRenameSubmit = useCallback((newName: string) => {
-    if (currentItemToRename && newName && newName !== currentItemToRename) {
-      setMeshAssignments(prev => {
-        const newAssignments = { ...prev };
-        newAssignments[newName] = newAssignments[currentItemToRename];
-        delete newAssignments[currentItemToRename];
-        return newAssignments;
+    if (!currentItemToRename || !newName.trim()) {
+      setCurrentItemToRename(null);
+      setIsRenameDialogOpen(false);
+      return;
+    }
+
+    if (renameType === 'group') {
+      setMeshGroups(prev => {
+        const newGroups = {
+          ...prev,
+          [currentItemToRename]: {
+            ...prev[currentItemToRename],
+            name: newName.trim()
+          }
+        };
+
+        const updatedData = {
+          ...data,
+          materials,
+          meshAssignments,
+          meshGroups: newGroups
+        };
+        safeUpdate(updatedData);
+
+        return newGroups;
+      });
+    } else if (renameType === 'groupMesh') {
+      const [groupId, oldMeshName] = currentItemToRename.split(':');
+      setMeshGroups(prev => {
+        const group = prev[groupId];
+        const meshAssignment = group.meshes[oldMeshName];
+        
+        const newMeshes = { ...group.meshes };
+        delete newMeshes[oldMeshName];
+        newMeshes[newName.trim()] = meshAssignment;
+
+        const newGroups = {
+          ...prev,
+          [groupId]: {
+            ...group,
+            meshes: newMeshes
+          }
+        };
+
+        const updatedData = {
+          ...data,
+          materials,
+          meshAssignments,
+          meshGroups: newGroups
+        };
+        safeUpdate(updatedData);
+
+        return newGroups;
       });
     }
+
     setCurrentItemToRename(null);
-  }, [currentItemToRename]);
+    setIsRenameDialogOpen(false);
+  }, [currentItemToRename, renameType, data, materials, meshAssignments, meshGroups, safeUpdate]);
+
+  const getAllMeshAssignmentsForPreview = useCallback(() => {
+    // Return the raw mesh assignments without any group priority logic
+    // This is for preview purposes only - we want to see everything
+    return meshAssignments;
+  }, [meshAssignments]);
 
   const handleAssignmentChange = useCallback((meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => {
     setMeshAssignments(prev => {
@@ -642,6 +1074,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     });
   }, [data, materials, safeUpdate]);
 
+  // Removed the debounced variant change handler - now handled in MeshItem
   const handleVariantChange = useCallback((meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
     setMeshAssignments(prev => {
       const newAssignments = {
@@ -707,7 +1140,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     });
   }, [data, materials, safeUpdate]);
 
-  const toggleMeshExpansion = useCallback((meshName: string) => {
+  const toggleMeshExpansion = (meshName: string) => {
     setExpandedMeshes(prev => {
       const newSet = new Set(prev);
       if (newSet.has(meshName)) {
@@ -717,14 +1150,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       }
       return newSet;
     });
-  }, []);
-
-  const debouncedHandleVariantChange = useMemo(
-    () => debounce((meshName: string, index: number, field: "name" | "material", value: string | undefined) => {
-      handleVariantChange(meshName, index, field, value);
-    }, 300),
-    [handleVariantChange]
-  );
+  };
 
   const meshItems = Object.entries(meshAssignments);
   const totalPages = Math.ceil(meshItems.length / ITEMS_PER_PAGE);
@@ -890,7 +1316,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           )}
           {activeSection === 'variants' && (
             <ExtractVariantsButton 
-              meshAssignments={meshAssignments}
+              meshAssignments={getAllMeshAssignmentsForPreview()}
               variant="default"
             />
           )}
@@ -905,10 +1331,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onDragEnd={handleMaterialOrderChange}
               onAddMaterials={handleAddMaterialsClick}
               onEditTags={handleEditTags}
-              onRenameMaterial={(name) => {
-                setCurrentItemToRename(name);
-                setIsRenameDialogOpen(true);
-              }}
+              onRenameMaterial={handleRenameMaterial}
               onRemoveMaterial={handleRemoveMaterial}
               onMoveMaterial={handleMoveMaterial}
               onRemoveTag={handleRemoveTag}
@@ -918,6 +1341,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           {activeSection === 'meshes' && (
             <MeshAssignmentsSection
               meshItems={meshItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)}
+              meshGroups={meshGroups}
               materials={materials}
               expandedMeshes={expandedMeshes}
               onToggleMeshExpansion={toggleMeshExpansion}
@@ -929,6 +1353,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               onRemoveVariant={handleRemoveVariant}
               onAddVariant={handleAddVariant}
               onAddMesh={handleAddMeshClick}
+              onAddGroup={handleAddGroup}
               currentPage={currentPage}
               totalPages={totalPages}
               onPageChange={setCurrentPage}
@@ -938,11 +1363,27 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               totalItems={Object.keys(meshAssignments).length}
               availableTags={uniqueTags}
               onAutoTagChange={handleAutoTagChange}
+              onToggleGroup={handleToggleGroup}
+              onRenameGroup={handleRenameGroup}
+              onRemoveGroup={handleRemoveGroup}
+              onSetGroupFilenames={handleSetGroupFilenames}
+              onAddMeshToGroup={handleAddMeshToGroup}
+              onGroupAssignmentChange={handleGroupAssignmentChange}
+              onGroupVariantChange={handleGroupVariantChange}
+              onRemoveVariantFromGroup={handleRemoveVariantFromGroup}
+              onAddVariantToGroup={handleAddVariantToGroup}
+              onRemoveMeshFromGroup={handleRemoveMeshFromGroup}
+              onRenameMeshInGroup={handleRenameMeshInGroup}
+              onGroupAutoTagChange={handleGroupAutoTagChange}
+              onGroupAutoAssignTag={handleGroupAutoAssignTag}
+              onMoveGroup={handleMoveGroup}
+              canMoveGroup={canMoveGroup}
             />
           )}
           {activeSection === 'variants' && (
             <PreviewVariantsSection
-              meshAssignments={meshAssignments}
+              meshAssignments={getAllMeshAssignmentsForPreview()}
+              meshGroups={meshGroups}
               materials={materials}
             />
           )}
@@ -957,6 +1398,22 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         description="Enter material names (comma-separated)"
       />
 
+      <InputDialog
+        isOpen={isAddGroupDialogOpen}
+        onClose={() => setIsAddGroupDialogOpen(false)}
+        onSubmit={handleAddGroupSubmit}
+        title="Add Group"
+        description="Enter group name"
+      />
+
+      <InputDialog
+        isOpen={isAddMeshToGroupDialogOpen}
+        onClose={() => setIsAddMeshToGroupDialogOpen(false)}
+        onSubmit={handleAddMeshToGroupSubmit}
+        title="Add Mesh to Group"
+        description="Enter mesh name"
+      />
+
       <MaterialSortDialog
         isOpen={isSortDialogOpen}
         onClose={() => setIsSortDialogOpen(false)}
@@ -968,7 +1425,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       <DuplicateMaterialDialog
         isOpen={isDuplicateDialogOpen}
         onClose={() => setIsDuplicateDialogOpen(false)}
-        onConfirm={handleDuplicateConfirm}
+        onConfirm={() => {}}
         duplicateMaterials={duplicateMaterials}
       />
 
@@ -978,17 +1435,22 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           setIsRenameDialogOpen(false);
           setCurrentItemToRename(null);
         }}
-        onSubmit={handleRenameMaterialSubmit}
-        title={`Rename ${currentItemToRename ? 'Material' : 'Mesh'}`}
-        initialValue={currentItemToRename || ''}
+        onSubmit={handleRenameSubmit}
+        title={`Rename ${renameType === 'group' ? 'Group' : renameType === 'groupMesh' ? 'Mesh' : 'Item'}`}
+        initialValue={
+          renameType === 'group' && currentItemToRename ? 
+            meshGroups[currentItemToRename]?.name || '' :
+          renameType === 'groupMesh' && currentItemToRename ?
+            currentItemToRename.split(':')[1] || '' :
+          currentItemToRename || ''
+        }
       />
       
       <InputDialog
         isOpen={isTagDialogOpen}
         onClose={() => setIsTagDialogOpen(false)}
-        onSubmit={handleTagSubmit}
+        onSubmit={() => {}}
         title="Edit Tags"
-        initialValue={currentItemToTag ? materials.find(m => m.name === currentItemToTag)?.tags.join(', ') || '' : ''}
         type="tags"
         placeholder="Add tags"
       />

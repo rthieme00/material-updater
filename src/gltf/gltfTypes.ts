@@ -31,9 +31,18 @@ export interface MeshAssignment {
   };
 }
 
+export interface MeshGroup {
+  id: string;
+  name: string;
+  filenames: string[];
+  meshes: { [meshName: string]: MeshAssignment };
+  isExpanded?: boolean;
+}
+
 export interface MaterialData {
   materials: Material[];
   meshAssignments: { [meshName: string]: MeshAssignment };
+  meshGroups?: { [groupId: string]: MeshGroup };
   models?: { [modelName: string]: string[] };
   sortSettings?: MaterialSortSettings;
 }
