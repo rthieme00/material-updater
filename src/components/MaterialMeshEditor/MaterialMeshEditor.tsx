@@ -10,6 +10,7 @@ import MaterialsSection from './MaterialsSection';
 import MeshAssignmentsSection from './MeshAssignmentsSection';
 import MaterialSortDialog from '../Dialogs/MaterialSortDialog';
 import DuplicateMaterialDialog from '../Dialogs/DuplicateMaterialDialog';
+import BulkTagModal from '../Dialogs/BulkTagModal';
 import { MaterialData, Material, MeshAssignment, MeshGroup, Variant, TagSortState } from '@/gltf/gltfTypes';
 import { ScrollArea } from '../ui/scroll-area';
 import PreviewVariantsSection from './PreviewVariantsSection';
@@ -57,6 +58,10 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     existingTags: string[];
     newTags: string[];
   }>>([]);
+
+  const [isBulkTagModalOpen, setIsBulkTagModalOpen] = useState(false);
+  const [bulkTagMode, setBulkTagMode] = useState<'add' | 'remove'>('add');
+  const [selectedMaterialsForBulk, setSelectedMaterialsForBulk] = useState<string[]>([]);
 
   const safeUpdate = useCallback((updatedData: MaterialData) => {
     if (onUpdate) {
@@ -492,6 +497,18 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [meshGroups]);
 
+  const handleBulkEditTags = useCallback((materialNames: string[]) => {
+    setSelectedMaterialsForBulk(materialNames);
+    setBulkTagMode('add');
+    setIsBulkTagModalOpen(true);
+  }, []);
+
+  const handleBulkRemoveTags = useCallback((materialNames: string[], availableTags: string[]) => {
+    setSelectedMaterialsForBulk(materialNames);
+    setBulkTagMode('remove');
+    setIsBulkTagModalOpen(true);
+  }, []);
+
   const autoTagAssignments = useMemo(() => {
     return Object.entries(meshAssignments).filter(([_, assignment]) => 
       assignment.autoTag?.enabled && assignment.autoTag.tag
@@ -856,6 +873,35 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     onUpdate(updatedData);
   }, [data, onUpdate, isAutoSortEnabled, sortMaterialsByCurrentSettings]);
 
+  const handleBulkTagConfirm = useCallback((selectedTags: string[], action: 'add' | 'remove') => {
+    const updatedMaterials = materials.map(material => {
+      if (selectedMaterialsForBulk.includes(material.name)) {
+        let newTags = [...material.tags];
+        
+        if (action === 'add') {
+          // Add new tags, avoiding duplicates
+          selectedTags.forEach(tag => {
+            if (!newTags.includes(tag)) {
+              newTags.push(tag);
+            }
+          });
+        } else {
+          // Remove specified tags
+          newTags = newTags.filter(tag => !selectedTags.includes(tag));
+        }
+        
+        return { ...material, tags: newTags };
+      }
+      return material;
+    });
+
+    updateAllTags(updatedMaterials);
+    updateMaterialsWithSort(updatedMaterials);
+
+    setIsBulkTagModalOpen(false);
+    setSelectedMaterialsForBulk([]);
+  }, [materials, selectedMaterialsForBulk, updateAllTags, updateMaterialsWithSort]);
+
   const handleRemoveMaterial = useCallback((materialName: string) => {
     setMaterials(prevMaterials => {
       const filteredMaterials = prevMaterials.filter(m => m.name !== materialName);
@@ -913,7 +959,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       const tagList = newTags.split(',')
         .map(t => t.trim())
         .filter(t => t.length > 0);
-
+  
       setMaterials(prevMaterials => {
         const updatedMaterials = prevMaterials.map(m =>
           m.name === currentItemToTag ? { ...m, tags: tagList } : m
@@ -970,6 +1016,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
   const handleRenameMaterial = useCallback((materialName: string) => {
     setCurrentItemToRename(materialName);
+    setRenameType('material'); // Add this line
     setIsRenameDialogOpen(true);
   }, []);
 
@@ -983,7 +1030,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         const sortedMaterials = isAutoSortEnabled 
           ? sortMaterialsByCurrentSettings(updatedMaterials)
           : updatedMaterials;
-
+  
         const newMeshAssignments = { ...meshAssignments };
         Object.keys(newMeshAssignments).forEach(meshName => {
           const assignment = newMeshAssignments[meshName];
@@ -996,14 +1043,14 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           }));
         });
         setMeshAssignments(newMeshAssignments);
-
+  
         const updatedData: MaterialData = {
           ...data,
           materials: sortedMaterials,
           meshAssignments: newMeshAssignments
         };
         onUpdate(updatedData);
-
+  
         return sortedMaterials;
       });
     }
@@ -1313,6 +1360,22 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     }
   }, [onSave]);
 
+  const renderMaterialsSection = () => (
+    <MaterialsSection
+      materials={materials}
+      onDragEnd={handleMaterialOrderChange}
+      onAddMaterials={handleAddMaterialsClick}
+      onEditTags={handleEditTags}
+      onRenameMaterial={handleRenameMaterial}
+      onRemoveMaterial={handleRemoveMaterial}
+      onMoveMaterial={handleMoveMaterial}
+      onRemoveTag={handleRemoveTag}
+      isAutoSortEnabled={isAutoSortEnabled}
+      onBulkEditTags={handleBulkEditTags}
+      onBulkRemoveTags={handleBulkRemoveTags}
+    />
+  );
+
   return (
     <div className="flex flex-col h-full p-4">
       <div className="flex items-center justify-between mb-4 pb-4 border-b">
@@ -1381,19 +1444,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
 
       <ScrollArea className="flex-1 h-[calc(100vh-12rem)] pr-4">
         <div className="h-full">
-          {activeSection === 'materials' && (
-            <MaterialsSection
-              materials={materials}
-              onDragEnd={handleMaterialOrderChange}
-              onAddMaterials={handleAddMaterialsClick}
-              onEditTags={handleEditTags}
-              onRenameMaterial={handleRenameMaterial}
-              onRemoveMaterial={handleRemoveMaterial}
-              onMoveMaterial={handleMoveMaterial}
-              onRemoveTag={handleRemoveTag}
-              isAutoSortEnabled={isAutoSortEnabled}
-            />
-          )}
+          {activeSection === 'materials' && renderMaterialsSection()}
           {activeSection === 'meshes' && (
             <MeshAssignmentsSection
               meshItems={meshItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)}
@@ -1491,8 +1542,8 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
           setIsRenameDialogOpen(false);
           setCurrentItemToRename(null);
         }}
-        onSubmit={handleRenameSubmit}
-        title={`Rename ${renameType === 'group' ? 'Group' : renameType === 'groupMesh' ? 'Mesh' : 'Item'}`}
+        onSubmit={renameType === 'material' ? handleRenameMaterialSubmit : handleRenameSubmit}
+        title={`Rename ${renameType === 'group' ? 'Group' : renameType === 'groupMesh' ? 'Mesh' : renameType === 'material' ? 'Material' : 'Item'}`}
         initialValue={
           renameType === 'group' && currentItemToRename ? 
             meshGroups[currentItemToRename]?.name || '' :
@@ -1504,10 +1555,18 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       
       <InputDialog
         isOpen={isTagDialogOpen}
-        onClose={() => setIsTagDialogOpen(false)}
-        onSubmit={() => {}}
+        onClose={() => {
+          setIsTagDialogOpen(false);
+          setCurrentItemToTag(null);
+        }}
+        onSubmit={handleTagSubmit}
         title="Edit Tags"
         type="tags"
+        initialValue={
+          currentItemToTag 
+            ? materials.find(m => m.name === currentItemToTag)?.tags.join(', ') || ''
+            : ''
+        }
         placeholder="Add tags"
       />
 
@@ -1517,6 +1576,18 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         onSubmit={handleAddMeshSubmit}
         title="Add Mesh"
         description="Enter mesh name"
+      />
+
+      <BulkTagModal
+        isOpen={isBulkTagModalOpen}
+        onClose={() => {
+          setIsBulkTagModalOpen(false);
+          setSelectedMaterialsForBulk([]);
+        }}
+        onConfirm={handleBulkTagConfirm}
+        materialNames={selectedMaterialsForBulk}
+        materials={materials}
+        mode={bulkTagMode}
       />
     </div>
   );
