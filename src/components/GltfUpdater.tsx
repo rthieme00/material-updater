@@ -17,7 +17,8 @@ import PermissionDialog from './Dialogs/PermissionDialog';
 import { MaterialData, GltfData } from '@/gltf/gltfTypes';
 import { saveFileWithFallback } from '@/utils/fileHandling';
 import { formatFileSize } from '@/lib/utils';
-import { ArrowUpDown, FolderOpen, Settings2 } from 'lucide-react';
+import { ArrowUpDown, FolderOpen, Settings2, Eye } from 'lucide-react';
+import InspectTargetFilesDialog from './Dialogs/InspectTargetFilesDialog';
 
 declare global {
   interface Window {
@@ -80,6 +81,33 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
   const [hasFileSystemPermission, setHasFileSystemPermission] = useState(false);
 
   const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
+
+  const [isInspectDialogOpen, setIsInspectDialogOpen] = useState(false);
+
+  const handleAddMaterialFromInspect = useCallback((materialName: string) => {
+    if (materialData && !materialData.materials.some(m => m.name === materialName)) {
+      const updatedData = {
+        ...materialData,
+        materials: [...materialData.materials, { name: materialName, tags: [] }]
+      };
+      updateMaterialData(updatedData);
+      setFeedback(`Added material: ${materialName}`);
+    }
+  }, [materialData, updateMaterialData, setFeedback]);
+
+  const handleAddMeshFromInspect = useCallback((meshName: string) => {
+    if (materialData && !materialData.meshAssignments[meshName]) {
+      const updatedData = {
+        ...materialData,
+        meshAssignments: {
+          ...materialData.meshAssignments,
+          [meshName]: { defaultMaterial: '', variants: [] }
+        }
+      };
+      updateMaterialData(updatedData);
+      setFeedback(`Added mesh assignment: ${meshName}`);
+    }
+  }, [materialData, updateMaterialData, setFeedback]);
 
   const validateFile = (file: File) => {
     const errors: {[key: string]: string} = {};
@@ -365,7 +393,20 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
 
       {/* Target Files Section */}
       <section className="space-y-4">
-        <Label className="text-lg font-semibold">Target Files</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-lg font-semibold">Target Files</Label>
+          {targetFiles.length > 0 && materialData && (
+            <Button
+              onClick={() => setIsInspectDialogOpen(true)}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
+            >
+              <Eye className="h-4 w-4" />
+              Inspect
+            </Button>
+          )}
+        </div>
         
         <FileUpload
           onFileSelect={handleTargetFilesSelect}
@@ -560,6 +601,17 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
         onClose={() => setIsErrorDialogOpen(false)}
         message={errorMessage}
       />
+
+      {materialData && (
+        <InspectTargetFilesDialog
+          isOpen={isInspectDialogOpen}
+          onClose={() => setIsInspectDialogOpen(false)}
+          targetFiles={targetFiles}
+          materialData={materialData}
+          onAddMaterial={handleAddMaterialFromInspect}
+          onAddMesh={handleAddMeshFromInspect}
+        />
+      )}
     </div>
   );
 };
