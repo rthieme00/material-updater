@@ -8,7 +8,8 @@ import {
   ChevronUp, 
   X, 
   Zap,
-  Plus 
+  Plus,
+  Settings
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import SearchableSelect from '@/components/ui/searchable-select';
 import TagSelectionModal from '../Dialogs/TagSelectionModal';
+import AutoTagMaterialSelectionModal from '../Dialogs/AutoTagMaterialSelectionModal';
 import { cn } from "@/lib/utils";
 
 interface MeshItemProps {
@@ -36,15 +38,17 @@ interface MeshItemProps {
     autoTag?: {
       enabled: boolean;
       tag: string;
+      selectedMaterials?: string[];
+      excludedMaterials?: string[];
     };
   };
-  materials: Array<{ name: string }>;
+  materials: Array<{ name: string; tags: string[] }>;
   expanded: boolean;
   onToggle: (meshName: string) => void;
   onRename: (meshName: string) => void;
   onRemove: (meshName: string) => void;
   onAutoAssign: (meshName: string, tag: string) => void;
-  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string) => void;
+  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => void;
   onAssignmentChange: (meshName: string, field: "defaultMaterial" | "variants", value: string | undefined) => void;
   onVariantChange: (meshName: string, index: number, field: "name" | "material", value: string | undefined) => void;
   onRemoveVariant: (meshName: string, index: number) => void;
@@ -79,6 +83,7 @@ const MeshItem: React.FC<MeshItemProps> = ({
   onAutoTagChange
 }) => {
   const [isTagSelectionOpen, setIsTagSelectionOpen] = useState(false);
+  const [isMaterialSelectionOpen, setIsMaterialSelectionOpen] = useState(false);
   const [expandedVariants, setExpandedVariants] = useState(false);
   
   // Local state for input values to avoid slow typing
@@ -106,6 +111,12 @@ const MeshItem: React.FC<MeshItemProps> = ({
       onAutoTagChange(meshName, false);
     } else {
       setIsTagSelectionOpen(true);
+    }
+  };
+
+  const handleMaterialSelectionClick = () => {
+    if (assignment.autoTag?.enabled && assignment.autoTag.tag) {
+      setIsMaterialSelectionOpen(true);
     }
   };
 
@@ -172,6 +183,24 @@ const MeshItem: React.FC<MeshItemProps> = ({
     };
   }, []);
 
+  // Get materials that have the auto tag
+  const getTaggedMaterials = () => {
+    if (!assignment.autoTag?.tag) return [];
+    return materials.filter(material => material.tags.includes(assignment.autoTag!.tag));
+  };
+
+  const getSelectedMaterialsCount = () => {
+    const taggedMaterials = getTaggedMaterials();
+    if (!assignment.autoTag?.selectedMaterials) {
+      return taggedMaterials.length; // Default: all materials are selected
+    }
+    return assignment.autoTag.selectedMaterials.length;
+  };
+
+  const getExcludedMaterialsCount = () => {
+    return assignment.autoTag?.excludedMaterials?.length || 0;
+  };
+
   return (
     <Card 
       ref={provided.innerRef}
@@ -228,6 +257,19 @@ const MeshItem: React.FC<MeshItemProps> = ({
             <Badge variant="secondary" className="ml-2">
               {localVariants.length} variants
             </Badge>
+            
+            {/* AutoTag Status Badge */}
+            {autoTagEnabled && assignment.autoTag?.tag && (
+              <div className="flex items-center gap-1">
+                <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-300">
+                  <Zap className="h-3 w-3 mr-1" />
+                  {assignment.autoTag.tag}
+                </Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {getSelectedMaterialsCount()}/{getTaggedMaterials().length}
+                </Badge>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -302,6 +344,25 @@ const MeshItem: React.FC<MeshItemProps> = ({
                 }
               </TooltipContent>
             </Tooltip>
+
+            {/* Material Selection Button - Only show when auto-tag is enabled */}
+            {autoTagEnabled && assignment.autoTag?.tag && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    onClick={handleMaterialSelectionClick}
+                    variant="outline" 
+                    size="sm"
+                    className="hover:bg-blue-100 dark:hover:bg-blue-800"
+                  >
+                    <Settings className="h-4 w-4 text-blue-500" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Configure material selection ({getSelectedMaterialsCount()}/{getTaggedMaterials().length} selected)
+                </TooltipContent>
+              </Tooltip>
+            )}
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -430,6 +491,27 @@ const MeshItem: React.FC<MeshItemProps> = ({
         tags={availableTags}
         title="Select Auto-Tag"
         description="This mesh will automatically use materials with the selected tag"
+      />
+
+      <AutoTagMaterialSelectionModal
+        isOpen={isMaterialSelectionOpen}
+        onClose={() => setIsMaterialSelectionOpen(false)}
+        onConfirm={(selectedMaterials, excludedMaterials) => {
+          if (assignment.autoTag?.tag) {
+            onAutoTagChange(
+              meshName, 
+              true, 
+              assignment.autoTag.tag, 
+              selectedMaterials, 
+              excludedMaterials
+            );
+          }
+          setIsMaterialSelectionOpen(false);
+        }}
+        tag={assignment.autoTag?.tag || ''}
+        materials={materials}
+        initialSelectedMaterials={assignment.autoTag?.selectedMaterials}
+        initialExcludedMaterials={assignment.autoTag?.excludedMaterials}
       />
     </Card>
   );

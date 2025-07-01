@@ -375,7 +375,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     setIsRenameDialogOpen(true);
   }, []);
 
-  const handleGroupAutoTagChange = useCallback((groupId: string, meshName: string, enabled: boolean, tag?: string) => {
+  const handleGroupAutoTagChange = useCallback((groupId: string, meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => {
     setMeshGroups(prev => {
       const newGroups = {
         ...prev,
@@ -387,12 +387,35 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
               ...prev[groupId].meshes[meshName],
               autoTag: enabled ? { 
                 enabled, 
-                tag: tag || prev[groupId].meshes[meshName]?.autoTag?.tag || '' 
+                tag: tag || prev[groupId].meshes[meshName]?.autoTag?.tag || '',
+                selectedMaterials: selectedMaterials || prev[groupId].meshes[meshName]?.autoTag?.selectedMaterials,
+                excludedMaterials: excludedMaterials || prev[groupId].meshes[meshName]?.autoTag?.excludedMaterials
               } : undefined
             }
           }
         }
       };
+
+      // Apply material filtering logic for groups too
+      if (enabled && tag) {
+        const allTaggedMaterials = materials.filter(m => m.tags.includes(tag));
+        
+        let materialsToUse: typeof materials;
+        if (selectedMaterials && selectedMaterials.length > 0) {
+          materialsToUse = allTaggedMaterials.filter(m => selectedMaterials.includes(m.name));
+        } else if (excludedMaterials && excludedMaterials.length > 0) {
+          materialsToUse = allTaggedMaterials.filter(m => !excludedMaterials.includes(m.name));
+        } else {
+          materialsToUse = allTaggedMaterials;
+        }
+        
+        if (materialsToUse.length > 0) {
+          newGroups[groupId].meshes[meshName].variants = materialsToUse.map(m => ({ 
+            name: m.name, 
+            material: m.name 
+          }));
+        }
+      }
 
       const updatedData = {
         ...data,
@@ -492,10 +515,29 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
       const tag = assignment.autoTag?.tag;
       if (!tag) return;
   
-      const taggedMaterials = materials.filter(m => m.tags.includes(tag));
-      if (taggedMaterials.length === 0) return;
+      // Get all materials with the tag
+      const allTaggedMaterials = materials.filter(m => m.tags.includes(tag));
+      
+      // Apply filtering based on selected/excluded materials
+      let materialsToUse: typeof materials;
+      if (assignment.autoTag?.selectedMaterials && assignment.autoTag.selectedMaterials.length > 0) {
+        // Use only selected materials
+        materialsToUse = allTaggedMaterials.filter(m => 
+          assignment.autoTag?.selectedMaterials?.includes(m.name)
+        );
+      } else if (assignment.autoTag?.excludedMaterials && assignment.autoTag.excludedMaterials.length > 0) {
+        // Use all materials except excluded ones
+        materialsToUse = allTaggedMaterials.filter(m => 
+          !assignment.autoTag?.excludedMaterials?.includes(m.name)
+        );
+      } else {
+        // Use all materials with the tag (default behavior)
+        materialsToUse = allTaggedMaterials;
+      }
+      
+      if (materialsToUse.length === 0) return;
   
-      const newVariants = taggedMaterials.map(m => ({ 
+      const newVariants = materialsToUse.map(m => ({ 
         name: m.name, 
         material: m.name 
       }));
@@ -607,7 +649,7 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
     return sortedMaterials;
   }, [data.sortSettings?.tagStates]);
 
-    const handleAutoTagChange = useCallback((meshName: string, enabled: boolean, tag?: string) => {
+  const handleAutoTagChange = useCallback((meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => {
     setMeshAssignments(prev => {
       const currentAssignment = prev[meshName];
       
@@ -615,14 +657,28 @@ const MaterialMeshEditor: React.FC<MaterialMeshEditorProps> = ({
         ...currentAssignment,
         autoTag: enabled ? { 
           enabled, 
-          tag: tag || currentAssignment?.autoTag?.tag || '' 
+          tag: tag || currentAssignment?.autoTag?.tag || '',
+          selectedMaterials: selectedMaterials || currentAssignment?.autoTag?.selectedMaterials,
+          excludedMaterials: excludedMaterials || currentAssignment?.autoTag?.excludedMaterials
         } : undefined
       };
 
       if (enabled && tag) {
-        const taggedMaterials = materials.filter(m => m.tags.includes(tag));
-        if (taggedMaterials.length > 0) {
-          newAssignment.variants = taggedMaterials.map(m => ({ 
+        // Get all materials with the tag
+        const allTaggedMaterials = materials.filter(m => m.tags.includes(tag));
+        
+        // Use selectedMaterials if provided, otherwise use all tagged materials minus excluded ones
+        let materialsToUse: typeof materials;
+        if (selectedMaterials && selectedMaterials.length > 0) {
+          materialsToUse = allTaggedMaterials.filter(m => selectedMaterials.includes(m.name));
+        } else if (excludedMaterials && excludedMaterials.length > 0) {
+          materialsToUse = allTaggedMaterials.filter(m => !excludedMaterials.includes(m.name));
+        } else {
+          materialsToUse = allTaggedMaterials;
+        }
+        
+        if (materialsToUse.length > 0) {
+          newAssignment.variants = materialsToUse.map(m => ({ 
             name: m.name, 
             material: m.name 
           }));

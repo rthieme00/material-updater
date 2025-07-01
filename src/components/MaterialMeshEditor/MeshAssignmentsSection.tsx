@@ -15,7 +15,7 @@ import { MeshGroup } from '@/gltf/gltfTypes';
 interface MeshAssignmentsSectionProps {
   meshItems: [string, { defaultMaterial: string; variants: Array<{ name: string; material: string }> }][];
   meshGroups: { [groupId: string]: MeshGroup };
-  materials: Array<{ name: string }>;
+  materials: Array<{ name: string; tags: string[] }>; // Fixed: Added tags property
   expandedMeshes: Set<string>;
   onToggleMeshExpansion: (meshName: string) => void;
   onRenameMesh: (meshName: string) => void;
@@ -35,7 +35,7 @@ interface MeshAssignmentsSectionProps {
   canMove: (index: number, direction: 'up' | 'down') => boolean;
   totalItems: number;
   availableTags: string[];
-  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string) => void;
+  onAutoTagChange: (meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => void; // Fixed: Added new parameters
   
   // Group-specific handlers
   onToggleGroup: (groupId: string) => void;
@@ -49,7 +49,7 @@ interface MeshAssignmentsSectionProps {
   onAddVariantToGroup: (groupId: string, meshName: string) => void;
   onRemoveMeshFromGroup: (groupId: string, meshName: string) => void;
   onRenameMeshInGroup: (groupId: string, meshName: string) => void;
-  onGroupAutoTagChange: (groupId: string, meshName: string, enabled: boolean, tag?: string) => void;
+  onGroupAutoTagChange: (groupId: string, meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => void; // Fixed: Added new parameters
   onGroupAutoAssignTag: (groupId: string, meshName: string, tag: string) => void;
   onMoveGroup: (fromIndex: number, direction: 'up' | 'down') => void;
   canMoveGroup: (index: number, direction: 'up' | 'down') => boolean;

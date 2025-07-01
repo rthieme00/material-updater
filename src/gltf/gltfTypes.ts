@@ -28,6 +28,8 @@ export interface MeshAssignment {
   autoTag?: {
     enabled: boolean;
     tag: string;
+    selectedMaterials?: string[]; // Materials that should be included
+    excludedMaterials?: string[]; // Materials that should be excluded
   };
 }
 

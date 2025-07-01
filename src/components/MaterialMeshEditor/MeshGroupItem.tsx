@@ -23,7 +23,7 @@ import { MeshGroup } from '@/gltf/gltfTypes';
 
 interface MeshGroupItemProps {
   group: MeshGroup;
-  materials: Array<{ name: string }>;
+  materials: Array<{ name: string; tags: string[] }>; // Updated to include tags
   onToggle: (groupId: string) => void;
   onRename: (groupId: string) => void;
   onRemove: (groupId: string) => void;
@@ -41,7 +41,7 @@ interface MeshGroupItemProps {
   onMove: (index: number, direction: 'up' | 'down') => void;
   canMove: (index: number, direction: 'up' | 'down') => boolean;
   availableTags: string[];
-  onAutoTagChange: (groupId: string, meshName: string, enabled: boolean, tag?: string) => void;
+  onAutoTagChange: (groupId: string, meshName: string, enabled: boolean, tag?: string, selectedMaterials?: string[], excludedMaterials?: string[]) => void; // Updated
   onAutoAssignTag: (groupId: string, meshName: string, tag: string) => void;
   expandedMeshes: Set<string>;
   onToggleMeshExpansion: (meshName: string) => void;
