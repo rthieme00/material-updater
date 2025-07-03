@@ -58,8 +58,7 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
   updateMaterialData
 }) => {
   const [targetFiles, setTargetFiles] = useState<File[]>([]);
-  const [applyVariants, setApplyVariants] = useState(true);
-  const [applyMoodRotation, setApplyMoodRotation] = useState(true);
+  const [reorderTextures, setReorderTextures] = useState(true);
   const [selectedModel, setSelectedModel] = useState('Regular');
   const [processingMode, setProcessingMode] = useState<'update' | 'export'>('update');
   const [isWarningDialogOpen, setIsWarningDialogOpen] = useState(false);
@@ -293,8 +292,7 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
               referenceData,
               targetData: jsonData,
               model: selectedModel,
-              applyVariants,
-              applyMoodRotation,
+              reorderTextures,
               materialData,
               processingMode,
               fileName: file.name,
@@ -339,8 +337,7 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
     outputDirectory,
     processingMode,
     selectedModel,
-    applyVariants,
-    applyMoodRotation,
+    reorderTextures,
     concurrentProcesses,
     referenceFileName,
     setFeedback
@@ -479,85 +476,76 @@ const GltfUpdater: React.FC<GltfUpdaterProps> = ({
           Processing Options
         </Label>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div className="flex items-center space-x-2">
             <Checkbox 
-              id="applyVariants" 
-              checked={applyVariants} 
-              onCheckedChange={(checked) => setApplyVariants(checked as boolean)}
+              id="reorderTextures" 
+              checked={reorderTextures} 
+              onCheckedChange={(checked) => setReorderTextures(checked as boolean)}
             />
-            <Label htmlFor="applyVariants">Apply Variants</Label>
+            <Label htmlFor="reorderTextures">Reorder Textures and Images by Alphabet</Label>
           </div>
-          
-          <div className="flex items-center space-x-2">
-            <Checkbox 
-              id="applyMoodRotation" 
-              checked={applyMoodRotation} 
-              onCheckedChange={(checked) => setApplyMoodRotation(checked as boolean)}
-            />
-            <Label htmlFor="applyMoodRotation">Apply Mood Rotation</Label>
-          </div>
-        </div>
 
-        {materialData && materialData.models && (
+          {materialData && materialData.models && (
+            <div className="space-y-2">
+              <Label htmlFor="modelSelect">Model Type</Label>
+              <Select onValueChange={setSelectedModel} value={selectedModel}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.keys(materialData.models).map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="space-y-2">
-            <Label htmlFor="modelSelect">Model Type</Label>
-            <Select onValueChange={setSelectedModel} value={selectedModel}>
+            <Label>Processing Mode</Label>
+            <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
               <SelectTrigger>
-                <SelectValue placeholder="Select a model" />
+                <SelectValue placeholder="Select processing mode" />
               </SelectTrigger>
               <SelectContent>
-                {Object.keys(materialData.models).map((model) => (
-                  <SelectItem key={model} value={model}>
-                    {model}
-                  </SelectItem>
-                ))}
+                <SelectItem value="update">Update GLTF Files</SelectItem>
+                <SelectItem value="export">Export Individual Variants</SelectItem>
               </SelectContent>
             </Select>
           </div>
-        )}
 
-        <div className="space-y-2">
-          <Label>Processing Mode</Label>
-          <Select value={processingMode} onValueChange={(value: 'update' | 'export') => setProcessingMode(value)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select processing mode" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="update">Update GLTF Files</SelectItem>
-              <SelectItem value="export">Export Individual Variants</SelectItem>
-            </SelectContent>
-          </Select>
+          {targetFiles.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="concurrentProcesses">Concurrent Processes</Label>
+              <Select 
+                value={concurrentProcesses.toString()} 
+                onValueChange={(value) => setConcurrentProcesses(Number(value))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select number of concurrent processes" />
+                </SelectTrigger>
+                <SelectContent>
+                  {processingMode === 'update' ? (
+                    Array.from({length: 9}, (_, i) => Math.pow(2, i)).map(value => (
+                      <SelectItem key={value} value={value.toString()}>
+                        {value}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    [1, 2, 3, 5, 8, 12].map(value => (
+                      <SelectItem key={value} value={value.toString()}>
+                        {value}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
-
-        {targetFiles.length > 1 && (
-          <div className="space-y-2">
-            <Label htmlFor="concurrentProcesses">Concurrent Processes</Label>
-            <Select 
-              value={concurrentProcesses.toString()} 
-              onValueChange={(value) => setConcurrentProcesses(Number(value))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select number of concurrent processes" />
-              </SelectTrigger>
-              <SelectContent>
-                {processingMode === 'update' ? (
-                  Array.from({length: 9}, (_, i) => Math.pow(2, i)).map(value => (
-                    <SelectItem key={value} value={value.toString()}>
-                      {value}
-                    </SelectItem>
-                  ))
-                ) : (
-                  [1, 2, 3, 5, 8, 12].map(value => (
-                    <SelectItem key={value} value={value.toString()}>
-                      {value}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
       </section>
 
       {isProcessing && (

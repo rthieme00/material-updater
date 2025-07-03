@@ -3,6 +3,207 @@
 import { MaterialData, GltfData, ExportedVariant, GltfMaterial, GltfMesh, GltfTexture, GltfImage, MeshAssignment, MeshGroup } from '@/gltf/gltfTypes';
 import { cloneDeep } from 'lodash';
 
+// Helper function to get image sort key (AO images first, then alphabetical)
+function getImageSortKey(image: GltfImage, index: number): string {
+  let imageName = '';
+  if (image.name) {
+    imageName = image.name;
+  } else if (image.uri) {
+    const filename = image.uri.split('/').pop() || '';
+    imageName = filename.replace(/\.[^/.]+$/, ''); // Remove extension
+  }
+
+  // AO images get priority (prefix "000_")
+  if (imageName.endsWith('_AO')) {
+    return `000_${imageName.toLowerCase()}`;
+  }
+
+  // Regular sorting for non-AO images
+  if (imageName) {
+    return `001_${imageName.toLowerCase()}`;
+  } else {
+    return `zzz_embedded_${index.toString().padStart(4, '0')}`; // Put embedded images at end
+  }
+}
+
+// Helper function to get texture sort key (AO texture first, then alphabetical)
+function getTextureSortKey(texture: GltfTexture, index: number): string {
+  const textureName = texture.name || '';
+
+  // Special AO texture gets top priority (prefix "000_")
+  if (textureName === 'tex_AmbientOcclusion_A') {
+    return `000_${textureName.toLowerCase()}`;
+  }
+
+  // Regular sorting for other textures
+  if (textureName) {
+    return `001_${textureName.toLowerCase()}`;
+  } else {
+    return `zzz_unnamed_${index.toString().padStart(4, '0')}`; // Put unnamed textures at end
+  }
+}
+
+// Helper function to find all texture references in materials
+function findAllTextureReferences(gltfData: GltfData): Array<{ object: any; key: string }> {
+  const references: Array<{ object: any; key: string }> = [];
+
+  const materials = gltfData.materials || [];
+  materials.forEach((material) => {
+    // PBR textures
+    const pbr = material.pbrMetallicRoughness;
+    if (pbr) {
+      if (pbr.baseColorTexture && typeof pbr.baseColorTexture.index === 'number') {
+        references.push({ object: pbr.baseColorTexture, key: 'index' });
+      }
+      if (pbr.metallicRoughnessTexture && typeof pbr.metallicRoughnessTexture.index === 'number') {
+        references.push({ object: pbr.metallicRoughnessTexture, key: 'index' });
+      }
+    }
+
+    // Other material textures
+    if (material.normalTexture && typeof material.normalTexture.index === 'number') {
+      references.push({ object: material.normalTexture, key: 'index' });
+    }
+    if (material.occlusionTexture && typeof material.occlusionTexture.index === 'number') {
+      references.push({ object: material.occlusionTexture, key: 'index' });
+    }
+    if (material.emissiveTexture && typeof material.emissiveTexture.index === 'number') {
+      references.push({ object: material.emissiveTexture, key: 'index' });
+    }
+
+    // Extension textures
+    const extensions = material.extensions;
+    if (extensions) {
+      Object.values(extensions).forEach((extData: any) => {
+        if (typeof extData === 'object' && extData !== null) {
+          Object.values(extData).forEach((propValue: any) => {
+            if (typeof propValue === 'object' && propValue !== null && typeof propValue.index === 'number') {
+              references.push({ object: propValue, key: 'index' });
+            }
+          });
+        }
+      });
+    }
+  });
+
+  return references;
+}
+
+// Helper function to find all image references in textures
+function findAllImageReferences(gltfData: GltfData): Array<{ object: any; key: string }> {
+  const references: Array<{ object: any; key: string }> = [];
+
+  const textures = gltfData.textures || [];
+  textures.forEach((texture) => {
+    if (typeof texture.source === 'number') {
+      references.push({ object: texture, key: 'source' });
+    }
+  });
+
+  return references;
+}
+
+// Helper function to reorder textures and images alphabetically
+function reorderTexturesAndImages(targetData: GltfData): void {
+  const images = targetData.images || [];
+  const textures = targetData.textures || [];
+
+  if (images.length === 0 && textures.length === 0) {
+    return;
+  }
+
+  console.log(`Reordering ${images.length} images and ${textures.length} textures`);
+
+  // Find all references before sorting
+  const textureReferences = findAllTextureReferences(targetData);
+  const imageReferences = findAllImageReferences(targetData);
+
+  console.log(`Found ${textureReferences.length} texture references`);
+  console.log(`Found ${imageReferences.length} image references`);
+
+  // Sort images
+  if (images.length > 0) {
+    console.log('Sorting images alphabetically...');
+
+    // Create list of (original_index, image, sort_key)
+    const imageItems = images.map((img, i) => ({
+      originalIndex: i,
+      image: img,
+      sortKey: getImageSortKey(img, i)
+    }));
+
+    // Sort by sort key
+    const sortedImageItems = imageItems.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    // Create mapping from old index to new index
+    const oldToNewImage = new Map<number, number>();
+    const newImages: GltfImage[] = [];
+
+    sortedImageItems.forEach((item, newIdx) => {
+      oldToNewImage.set(item.originalIndex, newIdx);
+      newImages.push(item.image);
+
+      const imageName = item.image.name || item.image.uri || `embedded_${item.originalIndex}`;
+      const isAO = imageName.endsWith('_AO');
+      const priorityMarker = isAO ? ' [AO]' : '';
+      console.log(`  ${item.originalIndex} → ${newIdx}: ${imageName}${priorityMarker}`);
+    });
+
+    // Update image references
+    imageReferences.forEach(ref => {
+      const oldIndex = ref.object[ref.key];
+      if (oldToNewImage.has(oldIndex)) {
+        const newIndex = oldToNewImage.get(oldIndex)!;
+        ref.object[ref.key] = newIndex;
+      }
+    });
+
+    targetData.images = newImages;
+  }
+
+  // Sort textures
+  if (textures.length > 0) {
+    console.log('Sorting textures alphabetically...');
+
+    // Create list of (original_index, texture, sort_key)
+    const textureItems = textures.map((tex, i) => ({
+      originalIndex: i,
+      texture: tex,
+      sortKey: getTextureSortKey(tex, i)
+    }));
+
+    // Sort by sort key
+    const sortedTextureItems = textureItems.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    // Create mapping from old index to new index
+    const oldToNewTexture = new Map<number, number>();
+    const newTextures: GltfTexture[] = [];
+
+    sortedTextureItems.forEach((item, newIdx) => {
+      oldToNewTexture.set(item.originalIndex, newIdx);
+      newTextures.push(item.texture);
+
+      const textureName = item.texture.name || `unnamed_${item.originalIndex}`;
+      const isAO = textureName === 'tex_AmbientOcclusion_A';
+      const priorityMarker = isAO ? ' [AO]' : '';
+      console.log(`  ${item.originalIndex} → ${newIdx}: ${textureName}${priorityMarker}`);
+    });
+
+    // Update texture references
+    textureReferences.forEach(ref => {
+      const oldIndex = ref.object[ref.key];
+      if (oldToNewTexture.has(oldIndex)) {
+        const newIndex = oldToNewTexture.get(oldIndex)!;
+        ref.object[ref.key] = newIndex;
+      }
+    });
+
+    targetData.textures = newTextures;
+  }
+
+  console.log('Texture and image reordering completed');
+}
+
 // Helper function to get mesh assignments with group priority
 function getMeshAssignmentsWithGroupPriority(
   materialData: MaterialData,
@@ -364,33 +565,11 @@ function applyVariants(targetData: GltfData, materialData: MaterialData, fileNam
   console.log(`Variant application completed for ${fileName}`);
 }
 
-// Update applyMoodRotation to preserve AO textures
-function applyMoodRotation(targetData: GltfData, isBlavalen: boolean) {
-  targetData.materials.forEach((material: GltfMaterial) => {
-    if (material.name.startsWith('MOO-')) {
-      const rotation = isBlavalen ? 0 : 1.56;
-      const applyRotation = (texture: any) => {
-        if (texture && texture.extensions && texture.extensions.KHR_texture_transform) {
-          const isAO = isAOTexture(targetData.textures[texture.index], targetData.images);
-          if (!isAO) {
-            texture.extensions.KHR_texture_transform.rotation = rotation;
-          }
-        }
-      };
-
-      if (material.normalTexture) applyRotation(material.normalTexture);
-      if (material.pbrMetallicRoughness?.baseColorTexture) applyRotation(material.pbrMetallicRoughness.baseColorTexture);
-      if (material.extensions?.KHR_materials_sheen?.sheenColorTexture) applyRotation(material.extensions.KHR_materials_sheen.sheenColorTexture);
-    }
-  });
-}
-
 export async function updateMaterials(
   referenceData: GltfData,
   targetData: GltfData,
   model: string,
-  applyVariantsFlag: boolean,
-  applyMoodRotationFlag: boolean,
+  reorderTextures: boolean,
   materialData: MaterialData,
   refFileName: string,
   targetFileName: string,
@@ -476,17 +655,14 @@ export async function updateMaterials(
 
     progressCallback(0.6);
 
-    // Apply mood rotation if needed
-    if (applyMoodRotationFlag) {
-      const isBlavalen = materialData.models?.['Blavalen']?.includes(model) || false;
-      applyMoodRotation(targetData, isBlavalen);
-    }
+    // Apply variants if needed (now with group priority)
+    applyVariants(targetData, materialData, targetFileName);
 
     progressCallback(0.8);
 
-    // Apply variants if needed (now with group priority)
-    if (applyVariantsFlag) {
-      applyVariants(targetData, materialData, targetFileName);
+    // Reorder textures and images if requested
+    if (reorderTextures) {
+      reorderTexturesAndImages(targetData);
     }
 
     // Final extension check after all processing
@@ -556,7 +732,7 @@ export async function exportIndividualVariants(
   jsonData: GltfData,
   fileName: string,
   model: string,
-  applyMoodRotationFlag: boolean,
+  reorderTextures: boolean,
   materialData: MaterialData,
   progressCallback: (progress: number) => void
 ): Promise<{ exportedVariants: ExportedVariant[] }> {
@@ -667,9 +843,9 @@ export async function exportIndividualVariants(
         }
       }
 
-      if (applyMoodRotationFlag) {
-        const isBlavalen = materialData.models?.['Blavalen']?.includes(model) || false;
-        applyMoodRotation(variantData, isBlavalen);
+      // Reorder textures and images if requested
+      if (reorderTextures) {
+        reorderTexturesAndImages(variantData);
       }
 
       const variantFileName = `${fileName.replace('.gltf', '')}${variantName}.gltf`;

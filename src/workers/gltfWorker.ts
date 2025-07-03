@@ -8,8 +8,7 @@ self.onmessage = async (e: MessageEvent) => {
     referenceData, 
     targetData, 
     model, 
-    applyVariants, 
-    applyMoodRotation, 
+    reorderTextures, 
     materialData, 
     processingMode, 
     fileName,
@@ -28,8 +27,7 @@ self.onmessage = async (e: MessageEvent) => {
         referenceData,
         targetData,
         model,
-        applyVariants,
-        applyMoodRotation,
+        reorderTextures,
         materialData,
         refFileName,
         targetFileName,
@@ -40,7 +38,7 @@ self.onmessage = async (e: MessageEvent) => {
         targetData,
         fileName,
         model,
-        applyMoodRotation,
+        reorderTextures,
         materialData,
         reportProgress
       );
